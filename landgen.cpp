@@ -256,7 +256,7 @@ EX void gen_eclectic_monster(cell *c) {
   else if(c2->wall == waIcewall)
     c->monst = pick(moWolf, moIceGolem);
   
-  else if(c2->wall == waNone && !c2->monst && hrand(100) < 5) {
+  else if(c2->wall == waNone && !c2->monst && hrand(100) < 5 && !shmup::on) {
     cell *c1 = c;
     c1->monst = moPair;
     c2->monst = moPair;
@@ -2519,6 +2519,8 @@ EX void giantLandSwitch(cell *c, int d, cell *from) {
     case laCrossroads3:
     case laCrossroads4:
     case laCrossroads5:
+    case laCrossroads6:
+    case laMasterCrossroads:
       if(c->wall == waTower) c->land = laCamelot;
       ONEMPTY {
         if(!BITRUNCATED && c->land == laCrossroads5 && hrand(100) < 60)
@@ -2990,6 +2992,7 @@ EX void set_land_for_geometry(cell *c) {
   #endif
   else if(mhybrid) setLandHybrid(c);
   else if(sphere || (euclid && closed_or_bounded)) setLandSphere(c);
+  else if((cgflags & qFRACTAL)) setland(c, specialland);
   else if(euclid) setLandEuclid(c);
   else if(quotient) { setland(c, specialland); setLandQuotient(c); }
   else if(sol) setLandSol(c);

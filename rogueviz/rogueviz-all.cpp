@@ -1,7 +1,7 @@
 // include all RogueViz vizualizations
 
 /* basics */
-#include "rogueviz.cpp"
+#include "graphs.cpp"
 #include "presentation.cpp"
 #include "statshot.cpp"
 
@@ -14,7 +14,6 @@
 #include "banachtarski.cpp"
 #include "pentagonal.cpp"
 #include "functions.cpp"
-#include "fundamental.cpp"
 #include "sunflower.cpp"
 #include "flocking.cpp"
 #include "magiccube.cpp"
@@ -88,12 +87,17 @@
 
 #include "sag/sag.cpp"
 
+#include "embeddings/embeddings.cpp"
+
+#include "watcher.cpp"
 
 // the following comments are read by mymake so that it knows that the files include other files there:
 // hidden dependencies: rogueviz/nilrider/
 // hidden dependencies: rogueviz/dhrg/
 // hidden dependencies: rogueviz/ads/
 // hidden dependencies: rogueviz/sag/
+// hidden dependencies: rogueviz/ru/
+// hidden dependencies: rogueviz/embeddings/
 
 //#endif
 

@@ -1,21 +1,11 @@
 // Hyperbolic Rogue
 // Copyright (C) 2011-2016 Zeno Rogue, see 'hyper.cpp' for details
 
-// Hyperbolic geometry is a good tool to visualize data,
-// especially trees and scale-free networks. This file
-// uses HyperRogue to browse such vizualizations.
+// Hyperbolic geometry is a good tool to visualize graphs,
+// especially trees and scale-free networks.
 
-// Since it is not of use for general HyperRogue players, 
-// it is disabled by default -- compile with the ROGUEVIZ flag to enable this.
-
-// How to use:
-
-// hyper -embed <start of filename> -- visualize a social network
-//   embedded into hyperbolic plane, see:
-//   https://bitbucket.org/HaiZhung/hyperbolic-embedder/overview
-//   (it uses the same format)
-
-// hyper -tess <parameter file> -- visualize a horocyclic tesselation,
+// This is the main file for such graph visualizations. It is used
+// by SAG, SOM, DHRG, and some other modules.
 
 #include "rogueviz.h"
 
@@ -129,13 +119,8 @@ colorpair parse(string s) {
         y -= 8;
         x /= 16.;
         y /= 16.;
-        ld r = max(abs(x), abs(y)) / hypot(x, y);
-        if(x || y) {
-          x *= r;
-          y *= r;      
-          }
         i.tinf.tvertices.push_back(glhr::makevertex(x + .5, y + .5, 0));
-        i.vertices.push_back(hpxy(x * .4, y * .4));
+        i.vertices.push_back(hpxy(x * .5 * cgi.scalefactor, y * .5 * cgi.scalefactor));
         };
       addv(x, y);
       addv(x, y+1);
@@ -162,6 +147,19 @@ colorpair parse(string s) {
 
 vector<vertexdata> vdata;
 
+vertexdata& add_vertex() {
+  int id = isize(vdata);
+  vdata.emplace_back();
+  auto& vd = vdata.back();
+  vd.id = id;
+  return vd;
+  }
+
+void resize_vertices(int N) {
+  while(isize(vdata) > N) { vdata.back().be_nowhere(); vdata.pop_back(); }
+  while(isize(vdata) < N) add_vertex();
+  }
+
 map<string, int> labeler;
 
 bool id_known(const string& s) {
@@ -170,12 +168,9 @@ bool id_known(const string& s) {
 
 int getid(const string& s) {
   if(labeler.count(s)) return labeler[s];
-  else {
-    int id = isize(vdata);
-    vdata.resize(isize(vdata) + 1);
-    vdata[id].name = s;
-    return labeler[s] = id;
-    }
+  auto& vd = add_vertex();
+  vd.name = s;
+  return labeler[s] = vd.id;
   }
 
 int getnewid(string s) {
@@ -183,19 +178,31 @@ int getnewid(string s) {
   return getid(s);
   }
   
-void addedge0(int i, int j, edgeinfo *ei) {
-  vdata[i].edges.push_back(make_pair(j, ei));
-  vdata[j].edges.push_back(make_pair(i, ei));
+void clear_extenders(edgeinfo *ei);
+void redo_extenders(edgeinfo *ei);
+
+void vertexdata::be_nowhere() {
+  if(m) m->dead = true;
+  m = nullptr;
+  for(auto& ei: edges)
+    clear_extenders(ei.second);
   }
 
-void createViz(int id, cell *c, transmatrix at) {
-  vertexdata& vd(vdata[id]);
-  vd.m = new shmup::monster;
-  vd.m->pid = id;
-  vd.m->type = moRogueviz;
-  vd.m->base = c;
-  vd.m->at = at;
-  vd.m->isVirtual = false;
+ld extenders_over = 4;
+int extender_levels = 3;
+int rv_quality = 4;
+
+void vertexdata::be(cell *c, transmatrix at) {
+  be_nowhere();
+  m = new shmup::monster;
+  m->pid = id;
+  m->type = moRogueviz;
+  m->base = c;
+  m->at = at;
+  m->isVirtual = false;
+  if(rv_quality >= 3) virtualRebase(m);
+  if(rv_quality >= 2) m->store();
+  if(rv_quality >= 4) for(auto& ei: edges) redo_extenders(ei.second);
   }
 
 void notimpl() {
@@ -214,46 +221,56 @@ hyperpoint where(int i, cell *base) {
     }
   }
 
-void addedge(int i, int j, edgeinfo *ei) {
-  cell *base = 
-    confusingGeometry() ? vdata[i].m->base : currentmap->gamestart();
-  hyperpoint hi = where(i, base);
-  hyperpoint hj = where(j, base);
+void add_extenders(edgeinfo *ei, cell *base, hyperpoint hi, hyperpoint hj, int lev) {
+  if(lev <= 0) return;
   double d = hdist(hi, hj);
-  if(d >= 4) {
-    hyperpoint h = mid(hi, hj);
-    int id = isize(vdata);
-    vdata.resize(id+1);
-    vertexdata& vd(vdata[id]);
-    vd.cp = colorpair(0x400000FF);
-    vd.virt = ei;
-    
-    createViz(id, base, rgpushxto0(h));
-    vd.m->no_targetting = true;
-    
-    addedge(i, id, ei);
-    addedge(id, j, ei);
-    virtualRebase(vdata[i].m);
-    }
-  else addedge0(i, j, ei);
+  if(d < extenders_over) return;
+
+  hyperpoint h = mid(hi, hj);
+
+  add_extenders(ei, base, hi, h, lev - 1);
+
+  auto m = new shmup::monster;
+  m->pid = ei->edge_id;
+  m->type = moRoguevizExtender;
+  m->base = base; m->at = rgpushxto0(h);
+  m->no_targetting = true;
+  virtualRebase(m);
+  m->store();
+  ei->extenders.push_back(m);
+
+  add_extenders(ei, base, h, hj, lev - 1);
+  }
+
+void clear_extenders(edgeinfo *ei) {
+  for(auto e: ei->extenders) e->dead = true;
+  ei->extenders.clear();
+  }
+
+void redo_extenders(edgeinfo *ei) {
+  clear_extenders(ei);
+
+  if(rv_quality < 4 || !vdata[ei->i].m || !vdata[ei->j].m) return;
+
+  int i = ei->i, j = ei->j;
+  cell *base = confusingGeometry() ? vdata[i].m->base : currentmap->gamestart();
+
+  add_extenders(ei, base, where(i, base), where(j, base), extender_levels);
   }
 
 vector<edgeinfo*> edgeinfos;
 
-void addedge(int i, int j, double wei, bool subdiv, edgetype *t) {
+void addedge(int i, int j, double wei, edgetype *t) {
+  int eid = isize(edgeinfos);
   edgeinfo *ei = new edgeinfo(t);
   edgeinfos.push_back(ei);
   ei->i = i;
-  ei->j = j;
+  ei->j = j;  
   ei->weight = wei;
-  if(subdiv) addedge(i, j, ei);
-  else addedge0(i, j, ei);
-  }
-
-void storeall(int from) {
-  for(int i=from; i<isize(vdata); i++)
-    if(vdata[i].m)
-      vdata[i].m->store();
+  ei->edge_id = eid;
+  vdata[i].edges.push_back(make_pair(j, ei));
+  vdata[j].edges.push_back(make_pair(i, ei));
+  redo_extenders(ei);
   }
 
 colorpair dftcolor = 0x282828FF;
@@ -278,16 +295,19 @@ void rogueviz_help(int id, int pagenumber) {
   int noedges = isize(vd.edges);
   help = helptitle(vd.name, vd.cp.color1 >> 8);
 
-  if(vd.info) {
+  for(auto info: vd.infos)
+    help += "\n\n" + info;
+
+  for(auto url: vd.urls) {
     #if CAP_URL
     help_extension hex;
     hex.key = 'L';
     hex.text = "open link";
-    hex.subtext = *vd.info;
-    hex.action = [&vd] () { open_url(*vd.info); };
+    hex.subtext = url;
+    hex.action = [&url] () { open_url(url); };
     help_extensions.push_back(hex);
     #else
-    help += "\n\nlink: " + *vd.info;
+    help += "\n\nlink: " + url;
     #endif
     }
   
@@ -412,17 +432,18 @@ color_t darken_a(color_t c) {
 #define SVG_LINK(x) 
 #endif
 
-void queuedisk(const shiftmatrix& V, const colorpair& cp, bool legend, const string* info, int i) {
+void queuedisk(const shiftmatrix& V, const colorpair& cp, bool legend, const string *url, int i) {
   if(legend && (int) cp.color1 == (int) 0x000000FF && backcolor == 0)
     poly_outline = 0x606060FF;
   else
     poly_outline = (bordcolor << 8) | 0xFF;
   
   #if CAP_TEXTURE
-  if(cp.img) {
+  if(cp.img && !anyshiftclick) {
     for(hyperpoint h: cp.img->vertices)
       curvepoint(h);
-    auto& qc = queuecurve(V, 0, 0xFFFFFFFF, PPR::MONSTER_HEAD);
+    auto V1 = V; V1.T = rgpushxto0(V.T * C0);
+    auto& qc = queuecurve(V1, 0, 0xFFFFFFFF, PPR::MONSTER_HEAD);
     qc.tinf = &cp.img->tinf;
     qc.flags |= POLY_TRIANGLES;
     return;
@@ -442,29 +463,33 @@ void queuedisk(const shiftmatrix& V, const colorpair& cp, bool legend, const str
     }
   else if(GDIM == 3) {
     V1 = face_the_player(V);
-    if(info) queueaction(PPR::MONSTER_HEAD, [info] () { SVG_LINK(*info); });
+    if(url) queueaction(PPR::MONSTER_HEAD, [url] () { SVG_LINK(*url); });
     queuepolyat(V1, sh, darken_a(cp.color1), PPR::MONSTER_HEAD);
-    if(info) queueaction(PPR::MONSTER_HEAD, [] () { SVG_LINK(""); });
+    if(url) queueaction(PPR::MONSTER_HEAD, [] () { SVG_LINK(""); });
     V1 = V;
     }
   else if(rog3) {
     int p = poly_outline; poly_outline = OUTLINE_TRANS; 
     queuepolyat(V, sh, 0x80, PPR::MONSTER_SHADOW); 
     poly_outline = p; 
-    if(info) queueaction(PPR::MONSTER_HEAD, [info] () { SVG_LINK(*info); });
+    if(url) queueaction(PPR::MONSTER_HEAD, [url] () { SVG_LINK(*url); });
     queuepolyat(V1 = orthogonal_move_fol(V, cgi.BODY), sh, darken_a(cp.color1), PPR::MONSTER_HEAD);
-    if(info) queueaction(PPR::MONSTER_HEAD, [] () { SVG_LINK(""); });
+    if(url) queueaction(PPR::MONSTER_HEAD, [] () { SVG_LINK(""); });
     }
   else {
-    if(info) queueaction(PPR::MONSTER_HEAD, [info] () { SVG_LINK(*info); });
+    if(url) queueaction(PPR::MONSTER_HEAD, [url] () { SVG_LINK(*url); });
     queuepoly(V1 = V, sh, darken_a(cp.color1));
-    if(info) queueaction(PPR::MONSTER_HEAD, [] () { SVG_LINK(""); });
+    if(url) queueaction(PPR::MONSTER_HEAD, [] () { SVG_LINK(""); });
     }
   switch(cp.shade) {
     case 't': queuepoly(V1, cgi.shDiskT, darken_a(cp.color2)); return;
     case 's': queuepoly(V1, cgi.shDiskS, darken_a(cp.color2)); return;
     case 'q': queuepoly(V1, cgi.shDiskSq, darken_a(cp.color2)); return;
     case 'm': queuepoly(V1, cgi.shDiskM, darken_a(cp.color2)); return;
+    case 'h': queuepoly(V1, cgi.shHalfDisk, darken_a(cp.color2)); return;
+    case 'c': queuepoly(V1, cgi.shMoonDisk, darken_a(cp.color2)); return;
+    case 'S': queuepoly(V1, cgi.shDiskSegment, darken_a(cp.color2)); return;
+    case 'e': queuepoly(V1, cgi.shEccentricDisk, darken_a(cp.color2)); return;
     case 'b': queuepoly(V1, GDIM == 3 ? cgi.shAnimatedTinyEagle[wingphase(200)] : cgi.shTinyBird, darken_a(cp.color2)); return;
     case 'f': queuepoly(V1, cgi.shTinyShark, darken_a(cp.color2)); return;
     case 'g': queuepoly(V1, cgi.shMiniGhost, darken_a(cp.color2)); return;
@@ -511,178 +536,166 @@ ld edgewidth = 1;
 
 bool highlight_target = true;
 
-bool drawVertex(const shiftmatrix &V, cell *c, shmup::monster *m) {
-  if(m->dead) return true;
-  if(m->type != moRogueviz) return false;
-  int i = m->pid;
-  vertexdata& vd = vdata[i];
-  
-  // bool ghilite = false;
-  
-  // if(vd.special && specialmark) ghilite = true;
-  
-  if(!gmatrix.count(m->base)) printf("base not in gmatrix\n");
+void draw_edge(const shiftmatrix &V, cell *c, edgeinfo *ei) {
 
-  int lid = shmup::lmousetarget ? shmup::lmousetarget->pid : -2;
-  
   bool multidraw = quotient;
+
+  if(ei->lastdraw >= frameid && !multidraw) return;
+  ei->lastdraw = frameid;
+
+  vertexdata& vd1 = vdata[ei->i];
+  vertexdata& vd2 = vdata[ei->j];
+
+  int oi = ei->i, oj = ei->j;
+  bool hilite = false;
+  if(vdata[oi].special && vdata[oj].special && specialmark) hilite = true;
+  else if(svg::in || inHighQual || !highlight_target) hilite = false;
+  else if(vd1.m == shmup::mousetarget) hilite = true;
+  else if(vd2.m == shmup::mousetarget) hilite = true;
+  else if(shmup::lmousetarget && shmup::lmousetarget->pid == oi) hilite = true;
+  else if(shmup::lmousetarget && shmup::lmousetarget->pid == oj) hilite = true;
+
+  if(ei->weight < (hilite ? ei->type->visible_from_hi : ei->type->visible_from)) return;
+
+  dynamicval<ld> w(vid.linewidth, vid.linewidth * edgewidth);
+  
+  color_t col = (hilite ? ei->type->color_hi : ei->type->color);
+  auto& alpha = part(col, 0);
+  
+  if(vizflags & RV_AUTO_MAXWEIGHT) {
+    if(ei->weight2 > maxweight) maxweight = ei->weight2;
+    alpha *= pow(ei->weight2 / maxweight, ggamma);
+    }
+  
+  if(svg::in && alpha < 16) return;
+  
+  if(ISWEB) {
+    if(alpha >= 128) alpha |= 15;
+    else if(alpha >= 64) alpha |= 7;
+    else if(alpha >= 32) alpha |= 3;
+    else if(alpha >= 16) alpha |= 1;
+    }
+  
+  alpha >>= darken;
+
+  shiftmatrix gm1, gm2;
   
   bool use_brm = closed_manifold && isize(currentmap->allcells()) <= brm_limit;
 
-  ld hi_weight = 0;
-        
-  if(!lshiftclick) for(int j=0; j<isize(vd.edges); j++) {
-    edgeinfo *ei = vd.edges[j].second;
-    if(multidraw && ei->i != i) continue;
-    vertexdata& vd1 = vdata[ei->i];
-    vertexdata& vd2 = vdata[ei->j];
-
-    int oi = ei->i, oj = ei->j;
-    bool hilite = false;
-    if(vdata[oi].special && vdata[oj].special && specialmark) hilite = true;
-    else if(svg::in || inHighQual || !highlight_target) hilite = false;
-    else if(vd1.m == shmup::mousetarget) hilite = true;
-    else if(vd2.m == shmup::mousetarget) hilite = true;
-    else if(oi == lid || oj == lid) hilite = true;
-
-    if(ei->weight < (hilite ? ei->type->visible_from_hi : ei->type->visible_from)) continue;
-
-    if((vd1.m == shmup::mousetarget || vd2.m == shmup::mousetarget) && m != shmup::mousetarget)
-      hi_weight = ei->weight;
-
-    // if(hilite) ghilite = true;
-    
-    if(ei->lastdraw < frameid || multidraw) {
-      ei->lastdraw = frameid;
-      dynamicval<ld> w(vid.linewidth, vid.linewidth * edgewidth);
-      
-      color_t col = (hilite ? ei->type->color_hi : ei->type->color);
-      auto& alpha = part(col, 0);
-      
-      if(vizflags & RV_AUTO_MAXWEIGHT) {
-        if(ei->weight2 > maxweight) maxweight = ei->weight2;
-        alpha *= pow(ei->weight2 / maxweight, ggamma);
-        }
-      // if(hilite || hiliteclick) alpha = (alpha + 256) / 2;
-      
-      if(svg::in && alpha < 16) continue;
-      
-      if(ISWEB) {
-        if(alpha >= 128) alpha |= 15;
-        else if(alpha >= 64) alpha |= 7;
-        else if(alpha >= 32) alpha |= 3;
-        else if(alpha >= 16) alpha |= 1;
-        }
-      
-      alpha >>= darken;
-
-      shiftmatrix gm1, gm2;
-      
-      if(use_brm) {
-        gm1 = V * memo_relative_matrix(vd1.m->base, c);
-        gm2 = gm1 * brm_get(vd1.m->base, tC0(vd1.m->at), vd2.m->base, tC0(vd2.m->at));
-        }
-      else if(multidraw || elliptic) {
-        gm1 = V * memo_relative_matrix(vd1.m->base, c);
-        gm2 = V * memo_relative_matrix(vd2.m->base, c);
-        }
-      else {
-        gm1 = ggmatrix(vd1.m->base);
-        gm2 = ggmatrix(vd2.m->base);
-        }
-      
-      shiftpoint h1 = gm1 * vd1.m->at * C0;
-      shiftpoint h2 = gm2 * vd2.m->at * C0;
-      
-      if(elliptic && hdist(h1, h2) > hdist(h1.h, centralsym * h2.h))
-        h2.h = centralsym * h2.h;
-      
-      if(multidraw) {
-        int code = int(h1[0]) + int(h1[1]) * 12789117 + int(h2[0]) * 126081253 + int(h2[1]) * 126891531;
-        int& lastdraw = drawn_edges[make_pair(ei, code)];
-        if(lastdraw == frameid) continue;
-        lastdraw = frameid;
-        }
-
-      /* if(hdist0(h1) < .001 || hdist0(h2) < .001) {
-        printf("h1 = %s\n", display(h1));
-        printf("h2 = %s\n", display(h2));
-        display(m->at);
-        display(vd2.m->at);
-        display(V);
-        display(gmatrix[vd2.m->base]);
-        display(shmup::calc_gmatrix(vd2.m->base));
-        } */
-      
-      if((col >> 8) == (DEFAULT_COLOR >> 8)) {
-        col &= 0xFF;
-        col |= (forecolor << 8);
-        }
-      
-      if(callhandlers(false, hooks_alt_edges, ei, false)) ;
-
-      else if(sl2)
-        twist::queueline_correct(h1, h2, col, 2 + vid.linequality, PPR::STRUCT0);
-
-      else if(sol && !fat_edges)
-        sn::queueline_lie(h1, h2, col, 2 + vid.linequality, PPR::STRUCT0);
-
-      else if(pmodel && !fat_edges && !sol) {
-        queueline(h1, h2, col, 2 + vid.linequality).prio = PPR::STRUCT0;
-        }
-      else {
-        cell *center = multidraw ? c : centerover;
-      
-        if(!multidraw && ei->orig && ei->orig != center && celldistance(ei->orig, center) > 3) 
-          ei->orig = NULL;
-        if(!ei->orig) {
-          ei->orig = center; // cwt.at;
-          ei->prec.clear();
-          
-          const shiftmatrix& T = multidraw ? V : ggmatrix(ei->orig);
-          
-          if(callhandlers(false, hooks_alt_edges, ei, true)) ;
-          else if(fat_edges) {
-            ei->tinf.tvertices.clear();
-            shiftmatrix T1 = gm1 * vd1.m->at;
-            hyperpoint goal = inverse_shift(T1, h2);
-            transmatrix S = inverse_shift(T, gm1) * vd1.m->at * rspintox(goal);
-            ld d = hdist0(goal);
-            for(int a=0; a<360; a+=30) {
-              auto store = [&] (ld a, ld b) {
-                storevertex(ei->prec, S * cpush(0, b) * hr::cspin(1, 2, a * degree) * cpush(1, fat_edges) * C0);
-                ei->tinf.tvertices.push_back(glhr::makevertex(0,(3+cos(a * degree))/4,0));
-                };
-              store(a, 0);
-              store(a+30, 0);
-              store(a, d);
-              store(a+30, 0);
-              store(a, d);
-              store(a+30, d);
-              }
-            }
-          else 
-            storeline(ei->prec, inverse_shift(T, h1), inverse_shift(T, h2));
-          }
-        
-        const shiftmatrix& T = multidraw ? V : ggmatrix(ei->orig);
-
-        queue_prec(T, ei, col);
-        if(elliptic) queue_prec(ggmatrix(ei->orig) * centralsym, ei, col);
-        }
-      }
-/*
-    */
+  if(use_brm) {
+    gm1 = V * memo_relative_matrix(vd1.m->base, c);
+    gm2 = gm1 * brm_get(vd1.m->base, tC0(vd1.m->at), vd2.m->base, tC0(vd2.m->at));
     }
-
-  if(!vd.virt) {
-    queuedisk(V * m->at, vd.cp, false, vd.info, i);
+  else if(multidraw || elliptic) {
+    gm1 = V * memo_relative_matrix(vd1.m->base, c);
+    gm2 = V * memo_relative_matrix(vd2.m->base, c);
+    }
+  else {
+    gm1 = ggmatrix(vd1.m->base);
+    gm2 = ggmatrix(vd2.m->base);
     }
   
+  shiftpoint h1 = gm1 * vd1.m->at * C0;
+  shiftpoint h2 = gm2 * vd2.m->at * C0;
+  
+  if(elliptic && hdist(h1, h2) > hdist(h1.h, centralsym * h2.h))
+    h2.h = centralsym * h2.h;
+  
+  if(multidraw) {
+    int code = int(h1[0]) + int(h1[1]) * 12789117 + int(h2[0]) * 126081253 + int(h2[1]) * 126891531;
+    int& lastdraw = drawn_edges[make_pair(ei, code)];
+    if(lastdraw == frameid) return;
+    lastdraw = frameid;
+    }
+
+  if((col >> 8) == (DEFAULT_COLOR >> 8)) {
+    col &= 0xFF;
+    col |= (forecolor << 8);
+    }
+  
+  if(callhandlers(false, hooks_alt_edges, ei, false)) ;
+
+  else if(sl2)
+    twist::queueline_correct(h1, h2, col, 2 + vid.linequality, PPR::STRUCT0);
+
+  else if(sol && !fat_edges)
+    sn::queueline_lie(h1, h2, col, 2 + vid.linequality, PPR::STRUCT0);
+
+  else if(pmodel && !fat_edges && !sol) {
+    queueline(h1, h2, col, 2 + vid.linequality).prio = PPR::STRUCT0;
+    }
+  else {
+    cell *center = multidraw ? c : centerover;
+  
+    if(!multidraw && ei->orig && ei->orig != center && celldistance(ei->orig, center) > 3) 
+      ei->orig = NULL;
+    if(!ei->orig) {
+      ei->orig = center; // cwt.at;
+      ei->prec.clear();
+      
+      const shiftmatrix& T = multidraw ? V : ggmatrix(ei->orig);
+      
+      if(callhandlers(false, hooks_alt_edges, ei, true)) ;
+      else if(fat_edges) {
+        ei->tinf.tvertices.clear();
+        shiftmatrix T1 = gm1 * vd1.m->at;
+        hyperpoint goal = inverse_shift(T1, h2);
+        transmatrix S = inverse_shift(T, gm1) * vd1.m->at * rspintox(goal);
+        ld d = hdist0(goal);
+        for(int a=0; a<360; a+=30) {
+          auto store = [&] (ld a, ld b) {
+            storevertex(ei->prec, S * cpush(0, b) * hr::cspin(1, 2, a * degree) * cpush(1, fat_edges) * C0);
+            ei->tinf.tvertices.push_back(glhr::makevertex(0,(3+cos(a * degree))/4,0));
+            };
+          store(a, 0);
+          store(a+30, 0);
+          store(a, d);
+          store(a+30, 0);
+          store(a, d);
+          store(a+30, d);
+          }
+        }
+      else 
+        storeline(ei->prec, inverse_shift(T, h1), inverse_shift(T, h2));
+      }
+    
+    const shiftmatrix& T = multidraw ? V : ggmatrix(ei->orig);
+
+    queue_prec(T, ei, col);
+    if(elliptic) queue_prec(ggmatrix(ei->orig) * centralsym, ei, col);
+    }
+  }
+
+bool drawVertex(const shiftmatrix &V, cell *c, shmup::monster *m) {
+  if(m->dead) return true;
+  if(m->type == moRoguevizExtender) {
+    draw_edge(V, c, edgeinfos[m->pid]);
+    return true;
+    }
+  if(m->type != moRogueviz) return false;
+
+  int i = m->pid;
+  vertexdata& vd = vdata[i];
+
+  if(vd.spillcolor != DEFAULT_COLOR) c->landparam = vd.spillcolor >> 8;
+  
+  if(!gmatrix.count(m->base)) printf("base not in gmatrix\n");
+
+  ld hi_weight = 0;
+        
+  if(!lshiftclick) for(auto& e: vd.edges) {
+    draw_edge(V, c, e.second);
+    if(vdata[e.first].m == shmup::mousetarget)
+      hi_weight = e.second->weight;
+    }
+
+  string *url = nullptr; if(vd.urls.size()) url = &vd.urls[0];
+
+  queuedisk(V * m->at, vd.cp, false, url, i);  
   
   if((showlabels || (show_edges && hi_weight)) && !darken) {
     bool doshow = true;
-    if((vizflags & RV_COMPRESS_LABELS) && i > 0 && !vd.virt) {
+    if((vizflags & RV_COMPRESS_LABELS) && i > 0) {
       vertexdata& vdp = vdata[vd.data];
       shiftpoint h2 = ggmatrix(vdp.m->base) * vdp.m->at * C0;
       if(hdist(h2, V * m->at * C0) < 0.1) doshow = false;
@@ -691,8 +704,7 @@ bool drawVertex(const shiftmatrix &V, cell *c, shmup::monster *m) {
     shiftpoint h = tC0(V * m->at);
     shiftmatrix V2 = GDIM == 3 ? V * m->at : rgpushxto0(h) * ypush(cgi.scalefactor * labelshift); // todo-variation
     if(doshow && !behindsphere(V2)) {
-      auto info = vd.info;
-      if(info) queueaction(PPR::MONSTER_HEAD, [info] () { SVG_LINK(*info); });
+      if(url) queueaction(PPR::MONSTER_HEAD, [url] () { SVG_LINK(*url); });
       string s;
       ld w = hi_weight;
       if(vizflags & RV_INVERSE_WEIGHT) w = 1/w;
@@ -700,7 +712,7 @@ bool drawVertex(const shiftmatrix &V, cell *c, shmup::monster *m) {
       else if(showlabels) s = vd.name;
       else if(hi_weight) s = fts(w);
       queuestr(V2, labelscale, s, forecolor, (svg::in || ISWEB) ? 0 : 1);
-      if(info) queueaction(PPR::MONSTER_HEAD, [] () { SVG_LINK(""); });
+      if(url) queueaction(PPR::MONSTER_HEAD, [] () { SVG_LINK(""); });
       }
     }
 
@@ -737,10 +749,10 @@ bool rogueviz_hud() {
     
     ld y = (current_display->radius * (i+.5)) / legit * 2 - current_display->radius + vid.yres/2;
 
-    transmatrix V = atscreenpos(x, y, current_display->radius/4);
+    shiftmatrix V = atscreenpos(x, y, current_display->radius/4);
     
     poly_outline = OUTLINE_NONE;
-    queuedisk(shiftless(V), vd.cp, true, NULL, i);
+    queuedisk(V, vd.cp, true, NULL, i);
     poly_outline = OUTLINE_DEFAULT;
     queuestr(int(x-rad), int(y), 0, rad*(svg::in?5:3)/4, vd.name, legend_color, 0, 16);
     }
@@ -750,16 +762,16 @@ bool rogueviz_hud() {
         
     ld y = (current_display->radius * (i+isize(legend)+.5)) / legit * 2 - current_display->radius + vid.yres/2;
 
-    transmatrix V = atscreenpos(x, y, current_display->radius/8);
+    shiftmatrix V = atscreenpos(x, y, current_display->radius/8);
     
     poly_outline = t->color | 0xFF;
-    queuepolyat(shiftless(V), cgi.shTriangle, 0, PPR::MONSTER_HEAD);
+    queuepolyat(V, cgi.shTriangle, 0, PPR::MONSTER_HEAD);
         
     poly_outline = OUTLINE_DEFAULT;
     queuestr(int(x-rad), int(y), 0, rad*(svg::in?5:3)/4, t->name, legend_color, 0, 16);
     }
   
-  quickqueue();
+  quickqueue(); glflush();
   return true;
   }
 
@@ -774,6 +786,15 @@ bool rv_ignore(char c) {
 void readcolor(const string& cfname) {
   FILE *f = fopen(cfname.c_str(), "rt");
   if(!f) { printf("color file missing\n"); exit(1); }
+  auto str_to_eol = [&] () {
+    string s;
+    while(true) {
+      int c = fgetc(f);
+      if(c == EOF || c == 10 || c == 13) return s;
+      s += c;
+      }
+    };
+
   while(true) {
     string lab = "";
     while(true) {
@@ -784,14 +805,14 @@ void readcolor(const string& cfname) {
       else lab += c;
       }
     
-    colorpair x;
+    hr::function<void(vertexdata&)> action;
     int c2 = fgetc(f);
     int known_id = -1;
     
     if(callhandlers(false, hooks_readcolor, c2, lab, f)) continue;
 
     if(c2 == '#') {
-      while(c2 != 10 && c2 != 13 && c2 != -1) c2 = fgetc(f);
+      str_to_eol();
       continue;
       }
     else if(c2 == '=') {
@@ -801,56 +822,57 @@ void readcolor(const string& cfname) {
         if(rv_ignore(c) || c == ',' || c == ';' || c == EOF) break;
         else lab2 += c;
         }
-      x = vdata[getid(lab2)].cp;
+      auto x = vdata[getid(lab2)].cp;
+      action = [x] (vertexdata &vd) { vd.cp = x; };
       }
     else if(c2 == '@') {
       legend.push_back(known_id == -1 ? getid(lab) : known_id);
       continue;
       }
+    else if(c2 == '.') {
+      color_t col;
+      int err = fscanf(f, "%08x", &col);
+      if(err <= 0) throw hstream_exception("reading dot-color");
+      action = [col] (vertexdata &vd) { vd.spillcolor = col; };
+      }
     else if(c2 == '/') {
-      char buf[600];
-      int err = fscanf(f, "%500s", buf);
-      if(err > 0) 
-        vdata[getid(lab)].info = new string(buf); // replace with std::shared_ptr in C++111
-      continue;
+      string s = str_to_eol();
+      action = [s] (vertexdata &vd) { vd.urls.push_back(s); };
+      }
+    else if(c2 == '?') {
+      string s = str_to_eol();
+      action = [s] (vertexdata &vd) { vd.infos.push_back(s); };
       }
     else if(c2 == '>') {
-      char buf[600];
-      int err = fscanf(f, "%500s", buf);
-      if(err > 0) {
-        vdata[getid(lab)].name = buf;
-        for(char& ch: vdata[getid(lab)].name) if(ch == '_') ch = ' ';
-        }
-      continue;
+      string s = str_to_eol();
+      action = [s] (vertexdata &vd) { vd.name = s; };
       }
     else {
       ungetc(c2, f);
-      char buf[600];
-      int err = fscanf(f, "%500s", buf);
-      if(err > 0) x = parse(buf);
+      auto x = parse(str_to_eol());
+      action = [x] (vertexdata &vd) { vd.cp = x; };
       }
     
     if(isize(lab) && lab[0] == '*') {
       lab = lab.substr(1);
-      for(int i=0; i<isize(vdata); i++)
-        if(vdata[i].name.find(lab) != string::npos) {
-          vdata[i].cp = x;
-          }
+      for(auto& vd: vdata)
+        if(vd.name.find(lab) != string::npos)
+          action(vd);
       }
     else if(isize(lab) && lab[0] == '!') {
-      for(int i=0; i<isize(vdata); i++)
-        if(vdata[i].name == lab) {
-          vdata[i].cp = x;
-          }
+      for(auto& vd: vdata)
+        if(vd.name == lab)
+          action(vd);
+      }
+    else if(isize(lab) && lab[0] == '^') {
+      int i = getid(lab);
+      while(i >= 0) {
+        action(vdata[i]);
+        i = vdata[i].data;
+        }
       }
     else {
-      int i = getid(lab);
-      again: vdata[i].cp = x;
-      
-      if(vizflags & RV_COLOR_TREE) {
-        i = vdata[i].data;
-        if(i >= 0) goto again;
-        }
+      action(vdata[getid(lab)]);
       }
     }
   }
@@ -896,15 +918,6 @@ void init(flagtype _vizflags) {
 
 int search_for = -1;
 
-vector<reaction_t> cleanup;
-
-void do_cleanup() {
-  while(!cleanup.empty()) {
-    cleanup.back()();
-    cleanup.pop_back();
-    }
-  }
-
 void close() { 
   search_for = -1;
   for(int i=0; i<isize(vdata); i++)
@@ -914,9 +927,7 @@ void close() {
   legend.clear();
   for(int i=0; i<isize(edgeinfos); i++) delete edgeinfos[i];
   edgeinfos.clear();
-  callhooks(hooks_close);
   edgetypes.clear();
-  do_cleanup();
   relmatrices.clear();
   }
 
@@ -1085,7 +1096,13 @@ void showVertexSearch() {
   dialog::v.clear();
   if(dialog::infix != "") mouseovers = dialog::infix;
 
-  for(int i=0; i<isize(vdata); i++) if(vdata[i].name != "") dialog::vpush(i, vdata[i].name.c_str());
+  for(int i=0; i<isize(vdata); i++) {
+    string n = vdata[i].name;
+    for(auto& u: vdata[i].infos) n += "||" + u;
+    if(n == "") continue;
+    if(n[0] == '|') n = its(i) + n;
+    dialog::vpush2(i, vdata[i].name, n);
+    }
 
   dialog::addBreak(50);
   dialog::start_list(900, 900, '1');
@@ -1105,7 +1122,7 @@ void showVertexSearch() {
 
   keyhandler = [] (int sym, int uni) {
     dialog::handleNavigation(sym, uni);    
-    if(dialog::editInfix(uni)) dialog::list_skip = 0;
+    if(dialog::editInfix(sym, uni)) dialog::list_skip = 0;
     else if(doexiton(sym, uni)) popScreen();
     };
 
@@ -1156,7 +1173,7 @@ void showMenu() {
 bool default_help() {
 
   help = 
-    "This is RogueViz, a visualization engine based on HyperRogue.\n\nUse WASD to move, v for menu.\n\n"
+    "This is RogueViz Graphs, a graph visualization engine based on HyperRogue.\n\nUse WASD to move, v for menu.\n\n"
     "Read more about RogueViz on : http://roguetemple.com/z/hyper/rogueviz.php\n\n";
 
   help_extensions.push_back(help_extension{'u', XLAT("RogueViz menu"), [] () { popScreen(); pushScreen(showMenu); }});    
@@ -1179,6 +1196,10 @@ auto hooks  =
     param_f(edgewidth, "rvedgewidth");
     param_f(min_line_splits, "edgeminsplits");
     param_f(max_line_splits, "edgemaxsplits");
+
+    param_f(extenders_over, "extenders_over");
+    param_i(extender_levels, "extender_levels");
+    param_i(rv_quality, "rv_quality");
     }) +
  0;
 

@@ -68,6 +68,16 @@ EX ld randf_from(std::mt19937& r) {
 
 EX ld hrandf() { return randf_from(hrngen); }
 
+/** returns true with probability p */
+EX bool chance(double p) {
+  p *= double(hrngen.max()) + 1;
+  auto l = hrngen();
+  auto pv = (decltype(l)) p;
+  if(l < pv) return true;
+  if(l == pv) return chance(p-pv);
+  return false;
+  }
+
 /** Returns an integer corresponding to the current state of \link hrngen \endlink.
  */
 EX int hrandstate() {
@@ -111,8 +121,6 @@ EX eMonster active_switch() {
 
 EX vector<cell*> crush_now, crush_next;
   
-EX int getDistLimit() { return cgi.base_distlimit; }
-
 EX void activateFlashFrom(cell *cf, eMonster who, flagtype flags);
 
 EX bool saved_tortoise_on(cell *c) {

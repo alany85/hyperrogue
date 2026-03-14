@@ -413,15 +413,28 @@ struct manual_celllister {
     return true;
     }
 
+  /** \brief remove a cell from the list */
+  bool remove(cell *c) {
+    if(!listed(c)) return false;
+    int i = c->listindex;
+    c->listindex = tmps[i];
+    tmps.erase(tmps.begin() + i);
+    lst.erase(lst.begin() + i);
+    return true;
+    }
+
   ~manual_celllister() {     
     for(int i=0; i<isize(lst); i++) lst[i]->listindex = tmps[i];
     }  
   };
-  
+
 /** \brief automatically generate a list of nearby cells */
 struct celllister : manual_celllister {
   vector<int> dists;
-  
+
+  enum stop_reason { srAll, srCount, srCell, srDistance };
+  stop_reason reason;
+
   void add_at(cell *c, int d) {
     if(add(c)) dists.push_back(d);
     }
@@ -439,13 +452,15 @@ struct celllister : manual_celllister {
       cell *c = lst[i];
       if(maxdist) forCellCM(c2, c) {
         add_at(c2, dists[i]+1);
-        if(c2 == breakon) return;
+        if(c2 == breakon) { reason = srCell; return; }
         }
       if(c == last) {
-        if(isize(lst) >= maxcount || dists[i]+1 == maxdist) break;
+        if(isize(lst) >= maxcount) { reason = srCount; return; }
+        if(dists[i]+1 == maxdist) { reason = srDistance; return; }
         last = lst[isize(lst)-1];
         }
       }
+    reason = srAll;
     }
   
   /** \brief for a given cell c on the list, return its distance from orig */
@@ -460,6 +475,23 @@ inline cellwalker operator+ (heptspin hs, cth_t) { return cellwalker(hs.at->c7, 
 #endif
 
 EX bool proper(cell *c, int d) { return d >= 0 && d < c->type; }
+
+/** return b-a, as in, a number x such that a+x == b. */
+EX int cwdiff(cellwalker b, cellwalker a) {
+  return a.mirrored ? a.spin - b.spin : b.spin - a.spin;
+  }
+
+/** like cwdiff but normalize to [0..type-1) */
+EX int cwdiff_fixed(cellwalker b, cellwalker a) {
+  return gmod(cwdiff(b, a), b.at->type);
+  }
+
+/** return c+(b-a) */
+EX cellwalker cw_add_diff(cellwalker c, cellwalker b, cellwalker a) {
+  c += cwdiff(b, a);
+  if(a.mirrored != b.mirrored) c += wmirror;
+  return c;
+  }
 
 #if HDR
 
@@ -499,6 +531,16 @@ struct movei {
   int rev_dir_force() const { hassert(proper()); return s->c.spin(d); }
   int dir_force() const { hassert(proper()); return d; }
   bool mirror() { return s->c.mirror(d); }
+  };
+#endif
+
+#if HDR
+struct jumpdata {
+  eMonster dashmon;
+  cell *jumpthru;
+  bool uniq;
+  vector<movei> moves;
+  jumpdata() { dashmon = moNone; jumpthru = nullptr; uniq = false; }
   };
 #endif
 

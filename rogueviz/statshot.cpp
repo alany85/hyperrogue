@@ -1,6 +1,5 @@
 #include "rogueviz.h"
 
-#if CAP_VIDEO
 namespace rogueviz {
 
 namespace statshot {
@@ -8,14 +7,12 @@ namespace statshot {
 void fadeout(ld val) {
   flat_model_enabler fme;
   initquickqueue();
-  ld pix = 1 / (2 * cgi.hcrossf / cgi.crossf);
   curvepoint(hyperpoint(-10, -10, 1, 1));
   curvepoint(hyperpoint(vid.xres + 10, -10, 1, 1));
   curvepoint(hyperpoint(vid.xres + 10, vid.yres + 10, 1, 1));
   curvepoint(hyperpoint(-10, vid.yres + 10, 1, 1));
   curvepoint(hyperpoint(-10, -10, 1, 1));
-  shiftmatrix V = shiftless(atscreenpos(0, 0, pix));
-  queuecurve(V, 0, (backcolor << 8) | int(val * 255), PPR::LINE);
+  queuecurve(atscreenpos(0, 0), 0, (backcolor << 8) | int(val * 255), PPR::LINE);
   quickqueue();
   }
 
@@ -59,6 +56,7 @@ int a = arg::add3("-label-video", [] {
   int i = atoi(scanline_noblank(f).c_str()); if(i) anims::noframes = i;
   anims::videofile = scanline_noblank(f);
   int fade = atoi(scanline_noblank(f).c_str());
+  hr::ignore(fade);
   string s;
   while(true) {
     s = scanline_noblank(f);
@@ -66,8 +64,9 @@ int a = arg::add3("-label-video", [] {
     desc.push_back(s);
     }
   hide_hud = false;
+  #if CAP_VIDEO
   anims::record_video(anims::videofile, [fade, desc] { return anims::record_animation_of([=] { shot_with_stats(fade, desc); }); });
+  #endif
   });
 
 }}
-#endif

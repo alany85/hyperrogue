@@ -267,10 +267,16 @@ EX namespace models {
   
   EX bool product_model(eModel m) {
     if(!gproduct) return false;
-    if(mdinf[m].flags & mf::product_special) return false;
+    if(mdinf[m].flags & mf::product_special && !(pmodel == mdDisk && pconf.alpha != 1)) return false;
     return true;
     }
   
+  EX bool conformal_product_model() {
+    if(!in_h2xe()) return false;
+    if(pmodel == mdDisk && pconf.alpha == 1) return true;
+    return pmodel == mdHalfplane;
+    }
+
   int editpos = 0;
   
   EX string get_model_name(eModel m) {
@@ -692,7 +698,7 @@ EX namespace models {
     bool shaderside_projection = get_shader_flags() & SF_DIRECT;
     if(vid.consider_shader_projection && !shaderside_projection)
       dialog::lastItem().value = XLAT("N/A");
-    if(vid.consider_shader_projection && shaderside_projection && vpmodel)
+    if(vid.consider_shader_projection && shaderside_projection && (get_shader_flags() & SF_NONSPATIAL))
       dialog::lastItem().value += XLAT(" (2D only)");
     dialog::add_action([] { vid.consider_shader_projection = !vid.consider_shader_projection; });
     #endif
@@ -1078,9 +1084,10 @@ EX namespace models {
         p.alpha = 1;
         auto proj = param_custom_ld(p.alpha, sp+"projection", menuitem_projection_distance, 'p');
         proj->help_text = "projection distance|Gans Klein Poincare orthographic stereographic";
+        proj->reaction = [] { update_linked(vid.tc_alpha); };
         }
       else {
-        param_f(p.alpha, sp+"projection", 1);
+        param_f(p.alpha, sp+"projection", 1)->editable(0, 1000, 1, "rug projection", "", 'p');
         }
 
       param_matrix(p.cam(), pp+"cameraangle", 3)

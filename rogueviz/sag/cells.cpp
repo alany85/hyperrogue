@@ -13,6 +13,8 @@ namespace sag {
 
 namespace cells {
 
+debugflag debug_sag_cells("sag_cells");
+
 bool angular = false;
 
 using subcell = pair<cell*, int>;
@@ -79,6 +81,7 @@ struct sagdist_t {
 
   #ifdef LINUX
   void map(string fname) {
+    DEBBI(debug_init_sag, ("map " + fname));
     clear();
     fd = open(fname.c_str(), O_RDONLY | O_LARGEFILE);
     if(fd == -1) throw hr_exception("open failed in map");
@@ -92,9 +95,39 @@ struct sagdist_t {
       }
 
     tab = (distance*) (((char*)tabmap) + 8);
-    println(hlog, "test: ", test());
+    if(debug_init_sag) println(hlog, "test: ", test());
     }
   #endif
+
+  void load_no_map(string fname) {
+    DEBBI(debug_init_sag, ("load_no_map ", fname));
+    clear();
+    #ifdef O_BINARY
+    fd = open(fname.c_str(), O_RDONLY | O_BINARY);
+    #else
+    fd = open(fname.c_str(), O_RDONLY);
+    #endif
+    println(hlog, "fd equals ", fd);
+    if(fd == -1) throw hr_exception("open failed in load_no_map");
+    if(read(fd, &N, 8) < 8) throw hr_exception("file error");
+    println(hlog, "read N = ", (int) N);
+    tab = new distance[N*N];
+    size_t fsize = N * N * sizeof(distance);
+    println(hlog, "allocated memory");
+    size_t offset = 0;
+    while(offset < fsize) {
+      ssize_t block = read(fd, ((char*)tab)+offset, fsize-offset);
+      #ifdef LINUX
+      println(hlog, "read ", hr::format("%zd/%zd", block, fsize-offset), "B");
+      #else
+      println(hlog, "read ", hr::format("%lld/%lld", block, fsize-offset), "B");
+      #endif
+      if(block <= 0) throw hr_exception("file error reading table");
+      offset += block;
+      }
+    if(debug_init_sag) println(hlog, "test: ", test());
+    ::close(fd); fd = 0;
+    }
 
   void load_old(string fname) {
     vector<vector<distance>> old;
@@ -107,13 +140,15 @@ struct sagdist_t {
     }
 
   void load(string fname) {
-    #ifdef LINUX
-    if(format == 1) map(fname);
+    if(format == 1) {
+      #ifdef LINUXX
+      map(fname);
+      #else
+      load_no_map(fname);
+      #endif
+      }
     else if(format == 2) load_old(fname);
     else throw hr_exception("sagdist format unknown");
-    #else
-    load_old(fname);
-    #endif
     }
 
   vector<int> test() {
@@ -124,13 +159,15 @@ struct sagdist_t {
     }
 
   void save(string fname) {
+    DEBBI(debug_init_sag, ("save ", fname));
     fd = open(fname.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if(!fd) return file_error(fname);
     if(write(fd, &N, 8) < 8) throw hr_exception("write error");
     size_t size =  N*N*sizeof(distance);
     #ifdef LINUX
-    println(hlog, "size is ", hr::format("%zd", size));
+    if(debug_init_sag) println(hlog, "size is ", hr::format("%zd", size));
     #else
-    println(hlog, "size is ", hr::format("%lld", (long long) size));
+    if(debug_init_sag) println(hlog, "size is ", hr::format("%lld", (long long) size));
     #endif
     char *p = (char*) tab;
     while(size) {
@@ -138,7 +175,7 @@ struct sagdist_t {
       if(written <= 0) throw hr_exception("bad written");
       p += written; size -= written;
       }
-    println(hlog, "test: ", test());
+    if(debug_init_sag) println(hlog, "test: ", test());
     ::close(fd);
     }
 
@@ -165,7 +202,8 @@ vector<hyperpoint> subcell_points;
 void generate_subcellpoints() {
   start_game();
   subcell_points.clear();
-  println(hlog, currentmap->get_cellshape(cwt.at).vertices_only);
+  if(debug_sag_cells)
+    println(hlog, currentmap->get_cellshape(cwt.at).vertices_only);
   ld mx = 1, my = 1, mz = 1;
   if(sol) mx = my = mz = log(2);
   for(int x=0; x<4; x++)
@@ -173,7 +211,8 @@ void generate_subcellpoints() {
   for(int z=0; z<4; z++) if((x&1) == (z&1)) {
     subcell_points.push_back(point31(mx * (x+.5-2)/4, my * (y+.5-2)/4, mz * (z+.5-2)/4));
     }
-  println(hlog, subcell_points);
+  if(debug_sag_cells)
+    println(hlog, subcell_points);
   }
 
 void ensure_subcell_points() {
@@ -227,8 +266,8 @@ void compute_dists() {
     sagdist.load(distance_file);
     }
   else if(gdist_prec && dijkstra_maxedge) {
+    DEBBI(debug_init_sag, ("Computing Dijkstra distances..."));
     sagdist.init(N, N);
-    println(hlog, "Computing Dijkstra distances...");
     vector<vector<pair<int, ld>>> dijkstra_edges(N);
     for(int i=0; i<N; i++) {
       celllister cl(sagcells[i].first, dijkstra_maxedge, 50000, nullptr);
@@ -239,7 +278,7 @@ void compute_dists() {
     parallelize(N, [&] (int a, int b) {
     vector<ld> distances(N);
     for(int i=a; i<b; i++) {
-      if(i % 500 == 0) println(hlog, "computing dijkstra for ", i , "/", N);
+      if(debug_progress && i % 500 == 0) println(hlog, "computing dijkstra for ", i , "/", N);
       for(int j=0; j<N; j++) distances[j] = HUGE_VAL;
       std::priority_queue<pair<ld, int>> pq;
       auto visit = [&] (int i, ld dist) {
@@ -259,26 +298,25 @@ void compute_dists() {
     return 0;
     }
     );
-    println(hlog, "N0 = ", neighbors[0]);
-    println(hlog, "N1 = ", neighbors[1]);
+    if(debug_init_sag)
+      println(hlog, "N0 = ", neighbors[0], " N1 = ", neighbors[1]);
     }
 
   else if(gdist_prec) {
+    DEBBI(debug_init_sag, ("Computing distances... (N=", N, ")"));
     sagdist.init(N, N);
-    println(hlog, "Computing distances... (N=", N, ")");
     ld mx = 1;
     for(int i=0; i<N; i++)
     for(int j=0; j<N; j++) {
       ld d = pdist(cellpoint[i], cellpoint[j]);
       sagdist[i][j] = (d + .5) * gdist_prec;
-      if(d > mx) {
+      if(d > mx && debug_sag_cells)
         println(hlog, kz(cellpoint[i]), kz(cellpoint[j]), " :: ", mx = d);
-        }
       }
     }
   
   else {
-    println(hlog, "no gdist_prec");
+    DEBBI(debug_init_sag, ("no gdist_prec"));
     sagdist.init(N, N);
     for(int i=0; i<N; i++) {
       auto sdi = sagdist[i];
@@ -292,7 +330,8 @@ void compute_dists() {
   max_sag_dist = 0;
   for(auto x: sagdist) max_sag_dist = max<int>(max_sag_dist, x);
   max_sag_dist++;
-  println(hlog, "max_sag_dist = ", max_sag_dist);
+  if(debug_init_sag)
+    println(hlog, "max_sag_dist = ", max_sag_dist);
   }
 
 bool legacy;
@@ -346,14 +385,15 @@ void compute_creq_neighbors() {
   max_sag_dist = 0;
   for(auto x: sagdist) max_sag_dist = max<int>(max_sag_dist, x);
   max_sag_dist++;
-  println(hlog, neighbors[0]);
+  if(debug_init_sag)
+    println(hlog, "the neighors of 0 are ", neighbors[0]);
   hlog.flush();
   }
 
 vector<vector<pair<ld, subcell>>> dijkstra_edges;
 
 void find_cells() {
-  println(hlog, "cellcount = ", cellcount);
+  DEBBI(debug_init_sag, ("find_cells with ", cellcount, " cells"));
   ensure_subcell_points();
   struct qitem {
     ld dist; subcell sc; transmatrix T; 
@@ -373,7 +413,10 @@ void find_cells() {
   visit(subcell{cwt.at,0}, 0, Id);
   ld maxdist0 = 0;
   for(int i=0;; i++) {
-    if(pq.empty()) { println(hlog, "no more"); break; }
+    if(pq.empty()) {
+      if(debug_init_sag) println(hlog, "all cells listed");
+      break;
+      }
     auto p = pq.top();
     pq.pop();
     ld dist = p.dist;
@@ -387,7 +430,8 @@ void find_cells() {
     sagsubcell_point.push_back(T * subcell_points[sc.second]);
     sagsubcell_inv.push_back(inverse(T));
     ids[sc] = i;
-    println(hlog, "cell ", i, " is ", sc, " at ", sagsubcell_point.back(), " in distance ", dist);
+    if(debug_sag_cells)
+      println(hlog, "cell ", i, " is ", sc, " at ", sagsubcell_point.back(), " in distance ", dist);
 
     if(dijkstra_maxedge) {
       dijkstra_edges.emplace_back();
@@ -427,7 +471,8 @@ void find_cells() {
       }
     }
   int SN = isize(sagcells);
-  println(hlog, "number of cells found: ", SN, " dijkstra_maxedge = ", dijkstra_maxedge);
+  if(debug_init_sag)
+    println(hlog, "number of cells found: ", SN, " dijkstra_maxedge = ", dijkstra_maxedge);
 
   all_disk_cells_sorted = {};
   for(auto p: ids) if(all_disk_cells_sorted.empty() || p.first.first != all_disk_cells_sorted.back()) all_disk_cells_sorted.push_back(p.first.first);
@@ -435,7 +480,8 @@ void find_cells() {
   }
 
 void init_cell_request() {
-  println(hlog, "generating on cell request");
+
+  DEBBI(debug_init_sag, ("generating on cell request"));
   find_cells();
 
   if(isize(subcell_points) == 1) {
@@ -447,18 +493,18 @@ void init_cell_request() {
   sagdist.init(SN, 0);
 
   if(!dijkstra_maxedge) {
-    println(hlog, "computing sagdist ...");
+    DEBBI(debug_init_sag, ("computing sagdist ..."));
     parallelize(SN, [&] (int a, int b) {
       for(int i=a; i<b; i++) {
         for(int j=0; j<SN; j++) {
           ld dist = pdist(sagsubcell_point[i], sagsubcell_point[j]);
           sagdist[i][j] = int(dist * gdist_prec + 0.5);
-          if(i < j && sagdist[i][j] == 0) println(hlog, "for ", tie(i,j), " pdist computed as ", dist);
+          if(i < j && sagdist[i][j] == 0 && debug_sag_cells)
+            println(hlog, "for ", tie(i,j), " pdist computed as ", dist);
           }
         }
       return 0;
       });
-    println(hlog, "... done");
     }
   else {
     vector<vector<pair<ld, int>>> dijkstra_edges_2;
@@ -468,7 +514,7 @@ void init_cell_request() {
     parallelize(SN, [&] (int a, int b) {
       vector<ld> distances(SN);
       for(int i=a; i<b; i++) {
-        if(i % 500 == 0) println(hlog, "computing dijkstra for ", i , "/", SN);
+        if(debug_progress && i % 500 == 0) println(hlog, "computing dijkstra for ", i , "/", SN);
         for(int j=0; j<SN; j++) distances[j] = HUGE_VAL;
         std::priority_queue<pair<ld, int>> pq;
         auto visit = [&] (int i, ld dist) {
@@ -504,7 +550,7 @@ void init_cells() {
 
   if(cell_request) {
     if(distance_file != "") {
-      println(hlog, "loading graph ", distance_file);
+      DEBBI(debug_init_sag, ("loading graph ", distance_file));
       sagdist.load(distance_file);
       if(distance_only) {
         sagcells.resize(sagdist.N, subcell{nullptr, 0});
@@ -644,6 +690,9 @@ int cell_read_args() {
     }
   else if(argis("-gen-subcellpoints")) {
     generate_subcellpoints();
+    }
+  else if(argis("-subcellpoints-off")) {
+    subcell_points.clear();
     }
   /* to viz only subcellpoints */
   else if(argis("-sag-clear")) {

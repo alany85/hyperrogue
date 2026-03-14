@@ -53,6 +53,7 @@
 #include "locations.cpp"
 #include "expansion.cpp"
 #include "goldberg.cpp"
+#include "goldberg-sub.cpp"
 #include "irregular.cpp"
 #include "pattern2.cpp"
 #include "flags.cpp"
@@ -112,6 +113,11 @@
 #include "hypgraph.cpp"
 #include "textures.cpp"
 #include "graph.cpp"
+#include "graph-player.cpp"
+#include "animations.cpp"
+#include "graph-wall.cpp"
+#include "graph-item.cpp"
+#include "graph-monster.cpp"
 #include "celldrawer.cpp"
 #include "sky.cpp"
 #include "blizzard.cpp"
@@ -127,6 +133,8 @@
 #include "vr.cpp"
 #include "intra.cpp"
 #include "crossbow.cpp"
+#include "fundamental.cpp"
+#include "arbiquotient.cpp"
 
 #if CAP_ROGUEVIZ
 #include "rogueviz/rogueviz-all.cpp"

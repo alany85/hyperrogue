@@ -29,13 +29,17 @@ EX void camrotate(ld& hx, ld& hy) {
   hx = p[0] / p[2], hy = p[1] / p[2];
   }
 
+/** Does the current model support 3D
+ *  Warning: since it depends on get_shader_flags(), you may need to current_display->set_all(0,0) for it to work correctly.
+ */
+
 EX bool non_spatial_model() {
   if(among(pmodel, mdRotatedHyperboles, mdJoukowsky, mdJoukowskyInverted, mdPolygonal, mdPolynomial))
     return true;
   if(pmodel == mdSpiral && euclid)
     return true;
   #if CAP_GL
-  return pmodel && vid.consider_shader_projection && (get_shader_flags() & SF_DIRECT);
+  return pmodel && vid.consider_shader_projection && (get_shader_flags() & SF_DIRECT) && (get_shader_flags() & SF_NONSPATIAL);
   #else
   return false;
   #endif
@@ -50,7 +54,7 @@ EX hyperpoint perspective_to_space(hyperpoint h, ld alpha IS(pconf.alpha), eGeom
   ld hr = hx*hx+hy*hy;
   if(LDIM == 3) hr += h[2]*h[2];
   
-  if(hr > .9999 && gc == gcHyperbolic) return Hypc;
+  if(hr >= 1 && gc == gcHyperbolic) return Hypc;
   
   ld A, B, C;
   
@@ -63,7 +67,7 @@ EX hyperpoint perspective_to_space(hyperpoint h, ld alpha IS(pconf.alpha), eGeom
   B /= A; C /= A;
   
   ld rootsign = 1;
-  if(gc == gcSphere && pconf.alpha > 1) rootsign = -1;
+  if(gc == gcSphere && alpha > 1) rootsign = -1;
   
   ld hz = B / 2 + rootsign * sqrt(C + B*B/4);
   
@@ -609,6 +613,31 @@ EX hyperpoint hyperboloid_form(hyperpoint ret) {
   return ret;
   }
 
+EX void product_projection(hyperpoint H, hyperpoint& ret, eModel proj) {
+  ld zlev = zlevel(H);
+  H /= exp(zlev);
+  H = space_to_perspective(H);
+  H[1] += 1;
+  double rad = sqhypot_d(2, H);
+  H /= rad;
+  H[1] -= 0.5;
+  H[1] = -H[1];
+  H[2] = 0; H[3] = 1; ret = H;
+  tie(H[1], H[2]) = make_pair( H[1] * cos(zlev), H[1] * sin(zlev) );
+
+  if(proj == mdDisk) {
+    H[1] = -H[1];
+    H[1] += 0.5;
+    rad = sqhypot_d(3, H);
+    H[0] /= rad; H[1] /= rad; H[2] /= rad;
+    H[1] -= 1;
+    }
+
+  H[3] = 1;
+
+  ret = NLP * H;
+  }
+
 EX void apply_other_model(shiftpoint H_orig, hyperpoint& ret, eModel md) {
 
   hyperpoint H = H_orig.h;
@@ -687,6 +716,10 @@ EX void apply_other_model(shiftpoint H_orig, hyperpoint& ret, eModel md) {
       }
     
     case mdDisk: {
+      if(mproduct && pconf.alpha == 1) {
+        product_projection(H, ret, mdDisk);
+        break;
+        }
       if(nonisotropic) {
         ret = lp_apply(inverse_exp(H_orig, pNORMAL | pfNO_DISTANCE));
         ld w;
@@ -738,8 +771,29 @@ EX void apply_other_model(shiftpoint H_orig, hyperpoint& ret, eModel md) {
       for(int d=0; d<GDIM; d++) ret[d] /= r;
       return;
       }
+
+    case mdConformalEgg: {
+      H /= H[GDIM] + 1;
+      models::scr_to_ori(H);
+
+      ld mul = pconf.model_transition / 9;
+
+      auto a = H[0], b = H[1];
+      auto A = a*a;
+      auto B = b*b;
+      ret[0] = a + a * (A - 3*B) * mul;
+      ret[1] = b + b * (3*A - B) * mul;
+
+      models::ori_to_scr(ret);
+      if(GDIM == 2) ret[2] = 0; if(MAXMDIM == 4) ret[3] = 1;
+      return;
+      }
     
     case mdHalfplane: {
+      if(mproduct) {
+        product_projection(H, ret, mdHalfplane);
+        break;
+        }
       if(sphere && vrhr::rendering()) {
         vr_sphere(ret, H, md);
         return;
@@ -851,6 +905,8 @@ EX void apply_other_model(shiftpoint H_orig, hyperpoint& ret, eModel md) {
         ret[0] = H_orig.h[0] * z / d;
         ret[1] = H_orig.h[1] * z / d;
         ret[3] = 1;
+        if(!vrhr::rendering()) ret = lp_apply(ret);
+        break;
         }
       find_zlev(H);
 
@@ -1265,7 +1321,7 @@ EX void apply_other_model(shiftpoint H_orig, hyperpoint& ret, eModel md) {
     #if MAXMDIM >= 4
       threepoint_projection(H, ret);
     #else
-      throw hr_exception();
+      throw hr_exception("three-point projection but MAXMDIM<4");
     #endif
       break;
     
@@ -1753,6 +1809,15 @@ EX bool invalid_point(const hyperpoint h) {
 
 EX bool invalid_point(const shiftpoint h) { return invalid_point(h.h); }
 
+/** convert the result of applymodel to on-screen coordinates */
+EX hyperpoint toscrcoord(hyperpoint h1) {
+  hyperpoint h2;
+  h2[0] = current_display->xcenter + current_display->radius * h1[0];
+  h2[1] = current_display->ycenter + current_display->radius * h1[1] * pconf.stretch;
+  h2[2] = h1[2];
+  return h2;
+  }
+
 EX bool in_smart_range(const shiftmatrix& T) {
   shiftpoint h = tC0(T);
   if(invalid_point(h)) return false;
@@ -1763,8 +1828,8 @@ EX bool in_smart_range(const shiftmatrix& T) {
   hyperpoint h1;
   applymodel(h, h1);
   if(invalid_point(h1)) return false;
-  ld x = current_display->xcenter + current_display->radius * h1[0];
-  ld y = current_display->ycenter + current_display->radius * h1[1] * pconf.stretch;
+  auto hscr = toscrcoord(h1);
+  auto& x = hscr[0], y = hscr[1];
 
   bool inp = in_perspective();
 
@@ -2029,6 +2094,7 @@ void hrmap_standard::draw_at(cell *at, const shiftmatrix& where) {
   }
 
 EX bool has_fixed_yz() {
+  if(walking::on) return false;
   return (embedded_plane || mhybrid || nil || (euclid && WDIM == 3) || sol || nih || (cgflags & qSTRETCHABLE) || (hyperbolic && bt::in()));
   }
 
@@ -2048,7 +2114,7 @@ EX hyperpoint vertical_vector() {
   if(mproduct && vid.fixed_yz) {
     return get_view_orientation() * lztangent(1);
     }
-  if(((cgflags & qSTRETCHABLE) || (mtwisted && sphere)) && vid.fixed_yz) {
+  if(((cgflags & qSTRETCHABLE) || mtwisted) && vid.fixed_yz) {
     return stretch::itranslate(View * C0) * View * lztangent(1);
     }
   if((nil || (euclid && GDIM == 3) || sol || nih) && vid.fixed_yz) {
@@ -2182,7 +2248,7 @@ EX void adjust_eye(transmatrix& T, cell *c, ld sign) {
   if(isWorm(c->monst) && sl < 3) sl++;
   ld i = cgi.emb->center_z();
   if(sl || vid.eye || i)
-    T = T * lzpush(sign * (cgi.SLEV[sl] - cgi.FLOOR - vid.eye + i));
+    T = T * lzpush(sign * (cgi.RED[sl] - cgi.FLOOR - vid.eye + i));
   }
 
 EX bool shmup_inverted() {
@@ -2207,6 +2273,10 @@ EX vector<transmatrix*> move_affected_matrices(int flag) {
   res.push_back(&cwtV.T);
   if(mapeditor::dt_in()) res.push_back(&mapeditor::cfree_old.T);
   return res;
+  }
+
+EX void adjust_aspeed(ld& aspd, ld R) {
+  aspd *= euclid ? (2+3*R*R) : (1+R+(shmup::on?1:0));
   }
 
 EX void centerpc(ld aspd) {
@@ -2257,7 +2327,6 @@ EX void centerpc(ld aspd) {
   
   if(ors::mode == 2 && vid.sspeed < 5) return;
   if(vid.sspeed >= 4.99) aspd = 1000;
-  DEBBI(DF_GRAPH, ("center pc"));
 
   auto mam = move_affected_matrices(0);
   for(auto pV: mam) ors::unrotate(*pV);
@@ -2292,7 +2361,7 @@ EX void centerpc(ld aspd) {
     }
   
   else {
-    aspd *= euclid ? (2+3*R*R) : (1+R+(shmup::on?1:0));
+    adjust_aspeed(aspd, R);
 
     if(R < aspd) fix_whichcopy_if_near();
     
@@ -2323,10 +2392,13 @@ EX transmatrix oView;
 
 EX purehookset hooks_preoptimize, hooks_postoptimize;
 
+EX bool dont_optimize;
+
 EX void optimizeview() {
 
   if(subscreens::split(optimizeview)) return;
   if(dual::split(optimizeview)) return;
+  if(dont_optimize) return;
   
   cell *c = centerover;
   transmatrix iView = view_inverse(View);
@@ -2385,7 +2457,7 @@ void ballgeometry() {
   }
 
 EX void resetview() {
-  DEBBI(DF_GRAPH, ("reset view"));
+  indenter_finish dif(debug_graph, "resetview");
   // EUCLIDEAN
   decide_lpu();
   NLP = Id;
@@ -2435,7 +2507,7 @@ EX void panning(shiftpoint hf0, shiftpoint ht0) {
   hyperpoint ht = unshift(ht0, hf0.shift);
   View = 
     rgpushxto0(hf) * rgpushxto0(gpushxto0(hf) * ht) * gpushxto0(hf) * View;
-  playermoved = false;
+  playermoved = false; currently_scrolling = true;
   }
 
 EX int cells_drawn, cells_generated;
@@ -2499,9 +2571,19 @@ EX void enable_flat_model(int val) {
     vid.human_wall_ratio = .7;
     vid.camera = 1;
     vid.depth = 1;
+    vid.creature_scale = 1;
     geom3::apply_always3();
     check_cgi();
+    cgi.require_basics();
     cgi.require_shapes();
+    if(cgi.shFloor.b.empty()) {
+      dynamicval<hrmap*> cm(currentmap);
+      currentmap = new hrmap_hyperbolic;
+      cgi.generate_floorshapes_for(1, currentmap->gamestart());
+      cgi.generate_floorshapes_for(0, currentmap->gamestart()->cmove(0));
+      cgi.finishshape();
+      cgi.extra_vertices();
+      }
     calcparam();
     }
   if(flat_on >= 1 && flat_on + val < 1) {
@@ -2524,31 +2606,41 @@ struct flat_model_enabler {
   };
 #endif
 
-EX transmatrix atscreenpos(ld x, ld y, ld size) {
+/** atscreenpos(x,y) * eupoint(x1,y1) renders at pixel coordinates (x+x1, y+y1) */
+EX shiftmatrix atscreenpos(ld x, ld y) {
   transmatrix V = Id;
   
   if(pmodel == mdPixel) {
     V[0][3] += (x - current_display->xcenter);
     V[1][3] += (y - current_display->ycenter);
-    V[0][0] = size * 2 * cgi.hcrossf / cgi.crossf;
-    V[1][1] = size * 2 * cgi.hcrossf / cgi.crossf;
+    V[0][0] = 1;
+    V[1][1] = 1;
     if(WDIM == 3) V[2][2] = -1;
     }
   else if(pmodel == mdHorocyclic) {
     V[0][3] += (x - current_display->xcenter) * 2 / current_display->radius;
     V[1][3] += (y - current_display->ycenter) * 2/ current_display->radius;
-    V[0][0] = size * 2 / current_display->radius;
-    V[1][1] = size * 2 / current_display->radius;
+    V[0][0] = 1;
+    V[1][1] = 1;
     }
   else { 
     V[0][2] += (x - current_display->xcenter);
     V[1][2] += (y - current_display->ycenter);
-    V[0][0] = size * 2 * cgi.hcrossf / cgi.crossf;
-    V[1][1] = size * 2 * cgi.hcrossf / cgi.crossf;
+    V[0][0] = 1;
+    V[1][1] = 1;
     V[2][2] = current_display->radius;
     if(S3 >= OINF) V[0][0] /= 5, V[1][1] /= 5;
     }
 
+  return shiftless(V);
+  }
+
+/** here, size is relative to the 'standard size' */
+EX shiftmatrix atscreenpos(ld x, ld y, ld size) {
+  shiftmatrix V = atscreenpos(x, y);
+  ld s = size * 2 * cgi.hcrossf / cgi.crossf;
+  V.T[0][0] *= s;
+  V.T[1][1] *= s;
   return V;
   }
 
@@ -3145,8 +3237,16 @@ EX transmatrix inverse_shift(const shiftmatrix& T1, const shiftmatrix& T2) {
   return iso_inverse(T1.T) * unshift(T2, T1.shift);
   }
 
+EX transmatrix inverse_shift_any(const shiftmatrix& T1, const shiftmatrix& T2) {
+  return inverse(T1.T) * unshift(T2, T1.shift);
+  }
+
 EX hyperpoint inverse_shift(const shiftmatrix& T1, const shiftpoint& T2) {
   return iso_inverse(T1.T) * unshift(T2, T1.shift);
+  }
+
+EX hyperpoint inverse_shift_any(const shiftmatrix& T1, const shiftpoint& T2) {
+  return inverse(T1.T) * unshift(T2, T1.shift);
   }
 
 EX void optimize_shift(shiftpoint& h) {
@@ -3196,12 +3296,12 @@ EX shiftmatrix optimized_shift(const shiftmatrix& T) {
 EX namespace dq {
   EX queue<pair<heptagon*, shiftmatrix>> drawqueue;
   
-  EX unsigned bucketer(const shiftpoint& T) {
+  EX buckethash_t bucketer(const shiftpoint& T) {
     if(cgi.emb->is_euc_in_sl2()) {
       auto T1 = T; optimize_shift(T1);
-      return bucketer(T1.h) + unsigned(floor(T1.shift*81527+.5));
+      return hashmix_to(bucketer(T1.h), hr::bucketer(T1.shift));
       }
-    return bucketer(T.h) + unsigned(floor(T.shift*81527+.5));
+    return hashmix_to(bucketer(T.h), hr::bucketer(T.shift));
     }
 
   EX set<heptagon*> visited;
@@ -3211,10 +3311,10 @@ EX namespace dq {
     drawqueue.emplace(h, T);
     }  
 
-  EX set<unsigned> visited_by_matrix;
+  EX set<buckethash_t> visited_by_matrix;
   EX void enqueue_by_matrix(heptagon *h, const shiftmatrix& T) {
     if(!h) return;
-    unsigned b = bucketer(T * tile_center());
+    buckethash_t b = bucketer(T * tile_center());
     if(visited_by_matrix.count(b)) { return; }
     visited_by_matrix.insert(b);
     drawqueue.emplace(h, T);
@@ -3231,7 +3331,7 @@ EX namespace dq {
 
   EX void enqueue_by_matrix_c(cell *c, const shiftmatrix& T) {
     if(!c) return;
-    unsigned b = bucketer(T * tile_center());
+    buckethash_t b = bucketer(T * tile_center());
     if(visited_by_matrix.count(b)) { return; }
     visited_by_matrix.insert(b);
     drawqueue_c.emplace(c, T);
@@ -3280,6 +3380,12 @@ EX bool do_draw(cell *c, const shiftmatrix& T) {
   if(h) return h > 0;
 
   if(WDIM == 3) {
+
+    if(models::conformal_product_model()) {
+      ld z = zlevel(T.T * C0);
+      if(z > M_PI + 0.01 || z <= 0.01 - M_PI) return false;
+      }
+
     // do not care about cells outside of the track
     if(GDIM == 3 && racing::on && c->land == laMemory && cells_drawn >= S7+1) return false;
 

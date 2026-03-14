@@ -198,8 +198,8 @@ void auto_orth(bool set_colors) {
     applymodel(M*p, ret);
     auto& col = vdata[i].cp.color1;
     for(int j=0; j<3; j++) {
-      println(hlog, "coloring ", tie(i,j), ret[j], " -> ", ilerp(pmin[j], pmax[j], ret[j]), " -> ", lerp(0, 255, ilerp(pmin[j], pmax[j], ret[j])));
-      part(col, j+1) = lerp(0, 255, ilerp(pmin[j], pmax[j], ret[j]));
+      println(hlog, "coloring ", tie(i,j), ret[j], " -> ", ilerp(pmin[j], pmax[j], ret[j]), " -> ", hr::lerp(0, 255, ilerp(pmin[j], pmax[j], ret[j])));
+      part(col, j+1) = hr::lerp(0, 255, ilerp(pmin[j], pmax[j], ret[j]));
       }
     vdata[i].cp.color2 = col;
     }
@@ -286,6 +286,19 @@ void viz_longpath() {
   history::create(sagcells[sagid[get_i]].first, sagcells[sagid[get_j]].first, Id);
   }
 
+void unoptimize() {
+  use_cells_to_draw = true;
+  drawthemap();
+  for(int i=0; i<isize(vdata); i++) {
+    vdata[i].m->at = inverse_shift(ggmatrix(cwt.at), ggmatrix(vdata[i].m->base)) * vdata[i].m->at;
+    vdata[i].m->base = cwt.at;
+    }
+  use_cells_to_draw = false;
+  shmup::fixStorage();
+  rogueviz::rv_change(dont_optimize, true);
+  rogueviz::rv_change(frustum_culling, false);
+  }
+
 int readArgs() {
 #if CAP_COMMANDLINE
   using namespace arg;
@@ -309,6 +322,9 @@ int readArgs() {
   else if(argis("-sagsmooth")) {
     shift(); sag::sag_ittime = argi();
     }
+  else if(argis("-sag-unoptimize")) {
+    unoptimize();
+    }
 
   else return 1;
 #endif
@@ -320,9 +336,7 @@ void init() {
   if(state & SS_GENERAL) return;
   state |= SS_GENERAL;
 
-  rogueviz::init(RV_GRAPH | RV_WHICHWEIGHT | RV_AUTO_MAXWEIGHT | RV_HAVE_WEIGHT);
-
-  rv_hook(rogueviz::hooks_close, 100, clear);
+  rv_hook(hooks_clearmemory, 100, clear);
   rv_hook(shmup::hooks_turn, 100, turn);
   rv_hook(hooks_drawcell, 100, visualize_subcells);
   rv_hook(rogueviz::hooks_rvmenu, 100, [] {
@@ -336,7 +350,6 @@ void init() {
   }
 
 void clear() {
-  sagedges.clear();
   visualization_active = false;
   neighbors.clear();
   sagcells.clear();
@@ -346,9 +359,9 @@ void clear() {
   cell_matrix.clear();
   cellpoint.clear();
   sagdist.clear();
-  subcell_points.clear();
   sag_edge = nullptr;
   state = 0;
+  qon.clear(); qsf.clear();
   }
 
 string cname() {

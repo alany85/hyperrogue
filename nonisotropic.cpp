@@ -84,8 +84,7 @@ EX namespace sn {
   
   void tabled_inverses::load() {
     if(loaded) return;
-    FILE *f = fopen(fname.c_str(), "rb");
-    if(!f) f = fopen((rsrcdir + fname).c_str(), "rb");
+    FILE *f = fopen(find_file(fname).c_str(), "rb");
     if(!f) { addMessage(XLAT("geodesic table missing")); pmodel = mdPerspective; return; }
     hr::ignore(fread(&PRECX, 4, 1, f));
     hr::ignore(fread(&PRECY, 4, 1, f));
@@ -766,8 +765,12 @@ EX namespace nilv {
     return H[0] * H[1] / 2;
     }
 
+  EX ld convert_bonus(hyperpoint H, ld from, ld to) {
+    return sym_to_heis_bonus(H) * (to - from);
+    }
+
   EX hyperpoint convert(hyperpoint H, ld from, ld to) {
-    H[2] += sym_to_heis_bonus(H) * (to - from);
+    H[2] += convert_bonus(H, from, to);
     return H;
     }
 
@@ -1474,14 +1477,17 @@ EX namespace hybrid {
 
         disc_quotient = abs(cycle_discrepancy(final));
 
-        if(debugflags & DF_GEOM) for(cell *c: ac) for(int i=0; i<c->type; i++) {
-          cellwalker cw(c, i);
-          if(cycle_discrepancy(cw)) println(hlog, cw, " ", cycle_discrepancy(cw));
-          }
-        if(debugflags & DF_GEOM) for(cell *c: ac) for(int i=0; i<c->type; i++) {
-          auto err = get_shift(cellwalker(c, i)) + get_shift(cellwalker(c, i)+wstep);
-          if(err)
-            println(hlog, "two-side error: ", err, " on ", cellwalker(c, i));
+        if(debug_geometry) {
+          indenter_finish in("fix_bounded_cycles");
+          for(cell *c: ac) for(int i=0; i<c->type; i++) {
+            cellwalker cw(c, i);
+            if(cycle_discrepancy(cw)) println(hlog, cw, " ", cycle_discrepancy(cw));
+            }
+          for(cell *c: ac) for(int i=0; i<c->type; i++) {
+            auto err = get_shift(cellwalker(c, i)) + get_shift(cellwalker(c, i)+wstep);
+            if(err)
+              println(hlog, "two-side error: ", err, " on ", cellwalker(c, i));
+            }
           }
         });
       }
@@ -1549,6 +1555,11 @@ EX namespace hybrid {
     subcellshape& get_cellshape(cell *c) override {      
       int id = full_shvid(c);
       return generate_subcellshape_if_needed(c, id);      
+      }
+
+    int pattern_value(cell *c) override {
+      auto c1 = hybrid::get_where(c).first;
+      return PIU ( currentmap->pattern_value(c1) );
       }
     };
   
@@ -1675,7 +1686,7 @@ EX namespace hybrid {
         });
       return spin(alpha) * twist::uxpush(tf) * twist::uypush(he) * twist::uzpush(lev) * C0;
       #else
-      throw hr_exception();
+      throw hr_exception("get_corner but MAXMDIM<4");
       #endif
       }
     }
@@ -1687,6 +1698,11 @@ EX namespace hybrid {
     });
   
   EX vector<pair<int, cell*>> gen_sample_list() {
+    if(geometry == gOctTet3) {
+      auto c = centerover;
+      if(currentmap->shvid(c)) c = c->cmove(0);
+      return {make_pair(0, c), make_pair(8, c->cmove(4)), make_pair(12, c->cmove(0)), make_pair(16, nullptr)};
+      }
     if(!mhybrid && WDIM != 2 && PURE)
       return {make_pair(0, centerover), make_pair(centerover->type, nullptr)};
     vector<pair<int, cell*>> result;
@@ -2551,25 +2567,30 @@ EX namespace twist {
   
     M[0][0] = +xx - yy - zz + ww;
     M[1][1] = -xx + yy - zz + ww;
-    M[2][2] = -xx - yy + zz + ww;
-    
-    M[0][1] = -2 * (xy + zw);
-    M[1][0] = -2 * (xy - zw);
-    
-    M[0][2] = 2 * (xz - yw);
-    M[2][0] = 2 * (xz + yw);
-
-    M[1][2] = -2 * (yz + xw);
-    M[2][1] = -2 * (yz - xw);
   
     if(hyperbolic) {
-      swap(M[0][2], M[1][2]);
-      swap(M[2][0], M[2][1]);
-      M[1][2] *= -1;
-      M[2][0] *= -1;
       M[2][2] = xx + yy + zz + ww;
-      return M;
-      }
+    
+      M[0][1] = -2 * (xy + zw);
+      M[1][0] = -2 * (xy - zw);
+      
+      M[0][2] = -2 * (yz + xw);
+      M[2][0] = 2 * (yz - xw);
+
+      M[1][2] = -2 * (xz - yw);
+      M[2][1] = 2 * (xz + yw);
+    } else {
+      M[2][2] = -xx - yy + zz + ww;
+    
+      M[0][1] = -2 * (xy + zw);
+      M[1][0] = -2 * (xy - zw);
+      
+      M[0][2] = 2 * (xz - yw);
+      M[2][0] = 2 * (xz + yw);
+
+      M[1][2] = -2 * (yz + xw);
+      M[2][1] = -2 * (yz - xw);
+    }
 
 
     return M;

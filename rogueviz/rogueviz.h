@@ -72,16 +72,16 @@ namespace rogueviz {
     cell *orig;
     int lastdraw;
     edgetype *type;
+    int edge_id;
     edgeinfo(edgetype *t) { orig = NULL; lastdraw = -1; type = t; }
+    vector<shmup::monster*> extenders;
     };
 
   extern vector<edgeinfo*> edgeinfos;
-  void addedge0(int i, int j, edgeinfo *ei);
-  void addedge(int i, int j, edgeinfo *ei);
-  void addedge(int i, int j, double wei, bool subdiv, edgetype *t);
+  void addedge(int i, int j, double wei, edgetype *t);
   extern vector<int> legend;
   extern vector<cell*> named;
-  
+
   int readLabel(fhstream& f);
 
   #if CAP_TEXTURE
@@ -101,55 +101,34 @@ namespace rogueviz {
     shared_ptr<rvimage> img;
     #endif
     colorpair(color_t col = 0xC0C0C0FF) { shade = 0; color1 = color2 = col; }
+    bool operator == (const colorpair& cp) {
+      return tie(color1, color2, shade, img) == tie(cp.color1, cp.color2, cp.shade, cp.img);
+      }
+    bool operator != (const colorpair& cp) { return !(self == cp); }
     };
   
   struct vertexdata {
+    int id;
     vector<pair<int, edgeinfo*> > edges;
     string name;
     colorpair cp;
-    edgeinfo *virt;
     bool special;
     int data;
-    string *info;
+    vector<string> urls;
+    vector<string> infos;
+    color_t spillcolor;
     shmup::monster *m;
-    vertexdata() { virt = NULL; m = NULL; info = NULL; special = false; }
+    vertexdata() { m = NULL; special = false; spillcolor = DEFAULT_COLOR; }
+    void be_nowhere();
+    void be(cell *c, transmatrix at);
     };
   
   extern vector<vertexdata> vdata;
+  vertexdata& add_vertex();
+  void resize_vertices(int n);
+
+  extern int rv_quality;
  
-  void storeall(int from = 0);
-  
-  extern vector<reaction_t> cleanup;
-  
-  void do_cleanup();
-
-  inline void on_cleanup_or_next(const reaction_t& del) {
-    #if CAP_TOUR
-    if(tour::on) tour::on_restore(del);
-    else
-    #endif
-    cleanup.push_back(del);
-    }
-
-  template<class T> void rv_change(T& variable, const T& value) {
-    T backup = variable;
-    variable = value;
-    on_cleanup_or_next([backup, &variable] { variable = backup; });
-    }
-
-  template<class T> void rv_keep(T& variable) {
-    T backup = variable;
-    on_cleanup_or_next([backup, &variable] { variable = backup; });
-    }
-
-  template<class T, class U> void rv_hook(hookset<T>& m, int prio, U&& hook) {
-    int p = addHook(m, prio, hook);
-    auto del = [&m, p] { 
-      delHook(m, p); 
-      };
-    on_cleanup_or_next(del);
-    }
-
   extern bool showlabels;
 
   extern bool rog3;
@@ -162,7 +141,6 @@ namespace rogueviz {
   inline purehookset hooks_rvmenu;
   inline hookset<bool()> hooks_rvmenu_replace;
   inline hookset<bool(int&, string&, FILE*)> hooks_readcolor;
-  inline purehookset hooks_close;
   
   void readcolor(const string& cfname);
 
@@ -256,6 +234,7 @@ function<void(presmode)> roguevizslide_action(char c, const T& t, const U& act) 
   void add_stat(presmode mode, const bool_reaction_t& stat);  
   void compare_projections(presmode mode, eModel a, eModel b);
   void no_other_hud(presmode mode);
+  void replace_hud(presmode mode, reaction_t f);
   void non_game_slide(presmode mode);
   void non_game_slide_scroll(presmode mode);
   void white_screen(presmode mode, color_t col = 0xFFFFFFFF);
@@ -269,20 +248,20 @@ function<void(presmode)> roguevizslide_action(char c, const T& t, const U& act) 
   static constexpr flagtype LATEX_COLOR = 1;
   
   void show_latex(presmode mode, string s);
+  string latex_cachename(string s, flagtype flags);
   void dialog_add_latex(string s, color_t color, int size = 100, flagtype flag = 0);
   void dialog_may_latex(string latex, string normal, color_t col = dialog::dialogcolor, int size = 100, flagtype flag = 0);
   void uses_game(presmode mode, string name, reaction_t launcher, reaction_t restore);
   void latex_slide(presmode mode, string s, flagtype flags = 0, int size = 100);
+  void latex_in_space(const shiftmatrix& V, ld scale, string s, color_t col, flagtype flags);
   
-  inline purehookset hooks_latex_slide;
+  inline purehookset hooks_latex_slide, hooks_post_latex_slide;
 
   inline ld angle = 0;
   inline int dir = -1;
   hyperpoint p2(ld x, ld y);
 #endif
   }
-
-  void createViz(int id, cell *c, transmatrix at);
 
   extern map<string, int> labeler;
   bool id_known(const string& s);
@@ -293,7 +272,7 @@ function<void(presmode)> roguevizslide_action(char c, const T& t, const U& act) 
   bool rv_ignore(char c);
 
   colorpair perturb(colorpair cp);
-  void queuedisk(const shiftmatrix& V, const colorpair& cp, bool legend, const string* info, int i);
+  void queuedisk(const shiftmatrix& V, const colorpair& cp, bool legend, const string* url, int i);
 
 /* 3D models */
 
@@ -406,7 +385,19 @@ namespace smoothcam {
   void enable_and_show();
   void backup();
   void append_backup();
+  void set_time(ld t);
   }
+
+#if RVCOL
+enum class rvlc { num, s, ms };
+void rv_achievement(const string& name);
+void rv_leaderboard(const string& name, int score, int highisgood, rvlc x);
+void rv_leaderboard(const string& name, int score, int highisgood, rvlc x, const string& data);
+#endif
 }
+
+#if RVCOL
+using rogueviz::rvlc;
+#endif
 
 #endif

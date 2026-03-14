@@ -16,6 +16,8 @@ EX string rsrcdir = RESOURCEDESTDIR;
 EX string rsrcdir = "";
 #endif
 
+EX bool delayed_start;
+
 #if CAP_COMMANDLINE
 EX string scorefile = "hyperrogue.log";
 
@@ -171,7 +173,7 @@ int arg::readCommon() {
   else if(argis("-rsrc")) { PHASE(1); shift(); rsrcdir = args(); }
   else if(argis("-nogui")) { PHASE(1); noGUI = true; }
 #ifndef EMSCRIPTEN
-#if CAP_SDL
+#if CAP_SDLTTF
   else if(argis("-font")) { PHASE(1); shift(); font_id = isize(font_filenames); font_filenames.push_back(args()); font_names.push_back({args(), "commandline"}); }
 #endif
 #endif
@@ -184,42 +186,6 @@ int arg::readCommon() {
   else if(argis("-offline")) {
     PHASE(1);
     offlineMode = true;
-    }
-  else if(argis("-no-stamp")) {
-    debugflags &=~ DF_TIME;
-    }
-  else if(argis("-debf")) {
-    shift(); 
-    string s = args();
-    for(char c: s) {
-      for(int i=0; i<int(strlen(DF_KEYS)); i++) {
-        if(DF_KEYS[i] == c) debugflags |= (1<<i);
-        else if(DF_KEYS[i] == (c ^ 32)) debugflags &= ~(1<<i);
-        }
-      if(c >= '0' && c <= '9') {
-        debugflags &= DF_TIME;
-        if(c >= '1')
-          debugflags |= DF_INIT | DF_WARN | DF_MSG | DF_ERROR;
-        if(c >= '2')
-          debugflags |= DF_GEOM | DF_GP | DF_LOG | DF_FIELD | DF_POLY;
-        if(c >= '3')
-          debugflags |= DF_TURN | DF_STEAM;
-        if(c >= '4')
-          debugflags |= DF_GRAPH | DF_MEMORY;
-        }
-      else if(c == '+') {
-        if(debugfile) fclose(debugfile);
-        shift(); 
-        println(hlog, "writing to ", argcs());
-        debugfile = fopen(argcs(), "at");  
-        }
-      else if(c == '@') {
-        if(debugfile) fclose(debugfile);
-        shift(); 
-        println(hlog, "writing to ", argcs());
-        debugfile = fopen(argcs(), "wt");  
-        }
-      }
     }
   else if(argis("-run")) {
     PHASE(3); 
@@ -325,10 +291,12 @@ int arg::readCommon() {
     }
 
   else if(argis("-save-mode")) {
+    PHASEFROM(2);
     save_mode_to_file(shift_args());
     }
 
   else if(argis("-load-mode")) {
+    PHASEFROM(2);
     try {
       load_mode_from_file(shift_args());
       }
@@ -433,8 +401,6 @@ EX purehookset hooks_config;
 EX hookset<int()> hooks_args;
 
 EX map<string, pair<int, reaction_t>> *added_commands;
-
-EX bool delayed_start;
 
 EX namespace arg {
 

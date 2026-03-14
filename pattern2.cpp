@@ -420,46 +420,7 @@ EX pair<int, bool> fieldval(cell *c) {
   }
 
 EX int fieldval_uniq(cell *c) {
-  if(fake::in()) return FPIU(fieldval_uniq(c));
-  if(experimental) return 0;
-  if(reg3::in() && !PURE) return 0;
-  else if(arb::in()) return arb::id_of(c->master);
-  else if(mhybrid) {
-    auto c1 = hybrid::get_where(c).first; 
-    return PIU ( fieldval_uniq(c1) );
-    }
-  else if(msphere) {
-    if(arcm::in()) return c->master->fiftyval;
-    #if CAP_IRR
-    else if(IRREGULAR) return irr::cellindex[c];
-    #endif
-    #if CAP_GP
-    else if(GOLDBERG_INV) return (get_code(gp::get_local_info(c)) << 8) | (sphere ? c->master->fieldval : c->master->fieldval / S7);
-    #endif
-    if(ctof(c)) return c->master->fieldval;
-    else return createMov(c, 0)->master->fieldval + 256 * createMov(c,2)->master->fieldval + (1<<16) * createMov(c,4)->master->fieldval;
-    }
-  else if(euc::in(2)) {
-    auto p = euc2_coordinates(c);
-    if(closed_manifold) return p.first + p.second * (1 << 16);
-    return gmod(p.first - 22 * p.second, 3*127);
-    }
-  else if(euc::in(3)) {
-    auto co = euc::get_ispacemap()[c->master];
-    if(closed_manifold) return co[0] + (co[1] << 10) + (co[2] << 20);
-    return gmod(co[0] + 3 * co[1] + 9 * co[2], 3*127);
-    }
-  else if(bt::in() || arcm::in() || nil || S3 >= OINF || (cgflags & qIDEAL)) return 0;
-  else if(&currfp == &fp_invalid) return 0;
-  else if(geometry == gSpace535) return 0;
-  else if(WDIM == 3) return c->master->fieldval;
-  else if(ctof(c) || NONSTDVAR) return c->master->fieldval/S7;
-  else {
-    int z = 0;
-    for(int u=0; u<S6; u+=2) 
-      z = max(z, btspin(createMov(c, u)->master->fieldval, c->c.spin(u)));
-    return -1-z;
-    }
+  return currentmap->pattern_value(c);
   }
 
 EX int fieldval_uniq_rand(cell *c, int randval) {
@@ -592,6 +553,9 @@ EX int getHemisphere(cell *c, int which) {
       if(score == 0 && error > .001) score++;
       if(score == 0 && error < -.001) score--;
       return score;
+      }
+    else if(INVERSE) {
+      return UIU(getHemisphere(c, which));
       }
     #endif
     #if CAP_IRR
@@ -1300,6 +1264,8 @@ EX int geosupport_threecolor() {
   if(arcm::in() && BITRUNCATED) return arcm::current.support_threecolor_bitruncated();
   if(arcm::in() && DUAL) return 0; // it sometimes does support threecolor, but it can be obtained in other ways then
   #endif
+  if(euc::in(2, 4) && BITRUNCATED) return 2;
+  if(a46 && BITRUNCATED) return 2;
   if(INVERSE) return 0;
   if(BITRUNCATED && S3 == 3) {
     if(S7 % 2) return 1;
@@ -1405,6 +1371,7 @@ EX int pattern_threecolor(cell *c) {
     }
   if(meuclid) {
     if(a4 && PURE) return eupattern4(c);
+    if(a4 && BITRUNCATED) return eupattern4(c) % 3;
     if(euc::in(2,6) && !BITRUNCATED) return eupattern(c) % 3;
     return c == c->master->c7 ? 0 : (c->c.spin(0)&1) ? 1 : 2;
     }
@@ -1592,12 +1559,14 @@ EX namespace ccolor {
   #define CCO [] (cell *c, data& cco) -> color_t
 
   bool is_mirrored(cell *c) {
+    #if CAP_ARCM
     if(arcm::in()) {
       int id = arcm::id_of(c->master);
       int tid = arcm::current.tilegroup[id];
       int tid2 = arcm::current.tilegroup[id^1];
       return (id&1) && (tid != tid2);
       }
+    #endif
     if(arb::in()) {
       int id = shvid(c);
       auto& sh = arb::current.shapes[id];
@@ -1707,6 +1676,7 @@ EX namespace ccolor {
     CCO { return cco.ctab[patterns::sevenval(c)]; },
     {0xC00000, 0xC08000, 0xC0C000, 0x00C000, 0xC0C0, 0x00C0, 0xC000C0});
 
+  #if CAP_CRYSTAL
   EX data crystal_colors = data("Crystal coordinates", [] { return cryst; },
     CCO { return crystal::colorize(c, 'K'); }, {});
 
@@ -1721,6 +1691,7 @@ EX namespace ccolor {
 
   EX data crystal_diagonal = data("Crystal diagonal", [] { return cryst; },
     CCO { return crystal::colorize(c, '/'); }, {});
+  #endif
 
   EX data nil_penrose = data("Nil staircase", [] { return nil; },
     CCO { return nilv::colorize(c, '/'); }, {});
@@ -1838,7 +1809,10 @@ EX namespace ccolor {
     &shape, &shape_mirror,
     &threecolor, &football, &chessboard,
     &landscape, &landscape_dark, &seven, &randbw, &distance,
-    &crystal_colors, &crystal_cage, &crystal_hyperplanes, &crystal_honeycomb, &crystal_diagonal, &nil_penrose,
+    #if CAP_CRYSTAL
+    &crystal_colors, &crystal_cage, &crystal_hyperplanes, &crystal_honeycomb, &crystal_diagonal,
+    #endif
+    &nil_penrose,
     &zebra_pattern, &zebra_triangles, &zebra_stripes, &emerald_pattern, &palace_elements, &palace_domains,
     #if CAP_FIELD
     &field_c, &field_d, &field_n, &field_s,
@@ -1911,7 +1885,7 @@ EX namespace ccolor {
   void list(bool instant) {
     dialog::start_list(900, 900, 'a');
     for(auto p: ccolor::all) if(p->available()) {
-      dialog::addBoolItem(p->name, p == which, dialog::list_fake_key++);
+      dialog::addBoolItem(XLAT(p->name), p == which, dialog::list_fake_key++);
       dialog::add_action([instant, p] {
         if(p == &plain) {
           config_plain(instant);
@@ -2392,6 +2366,7 @@ EX namespace patterns {
     return false;
     }
   
+  #if HDR
   struct changeable_pattern_geometry {
     eGeometry geo;
     eVariation var;
@@ -2403,8 +2378,9 @@ EX namespace patterns {
     string name;
     vector<changeable_pattern_geometry> geometries;
     };
+  #endif
   
-  vector<changeable_pattern> cpatterns = {
+  EX vector<changeable_pattern> cpatterns = {
     {"football", {
       {gNormal, eVariation::bitruncated, PAT_TYPES, 0}, 
       {gSphere, eVariation::bitruncated, PAT_TYPES, 0}, 
@@ -2694,7 +2670,7 @@ EX namespace linepatterns {
       )
     );
   
-  linepattern patHepta("Gray Raider moves", 0xC0C0C000, if_pseudohept,
+  EX linepattern patHepta = linepattern("Gray Raider moves", 0xC0C0C000, if_pseudohept,
     ALLCELLS(
       forCellIdEx(c2, i, c) if(way(c,i)) if(pseudohept(c) == pseudohept(c2)) 
         gridlinef(V, C0, V * currentmap->adj(c, i), C0, col, 2 + vid.linequality);
@@ -2746,7 +2722,7 @@ EX namespace linepatterns {
 
   EX ld tree_starter = 0.25;
 
-  EX linepattern patTree = linepattern("underlying tree", 0x00d0d000, [] { return trees_known() && mod_allowed(); },
+  EX linepattern patTree = linepattern("underlying tree", 0x00d0d000, [] { return bt::in() || (trees_known() && mod_allowed()); },
     ALLCELLS(
       if(is_master(c)) {
         int dir = updir(c->master);

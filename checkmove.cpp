@@ -301,9 +301,11 @@ EX bool swordConflict(const player_move_info& sm1, const player_move_info& sm2) 
 EX string yasc_message;
 
 EX string blocking_monster_name(const moveissue& mi) {
+  #if CAP_COMPLEX2
   if(mi.monster == moKnight && mi.where)
     return XLAT("%1 the Knight", camelot::knight_name(mi.where));
   else
+  #endif
     return dnameof(mi.monster);
   }
 
@@ -467,7 +469,7 @@ EX void checkmove() {
   if(!canmove) {
     create_yasc_message();
     achievement_final(true);
-    if(cmode & sm::NORMAL) showMissionScreen();
+    if(cmode & sm::NORMAL) showMissionScreen(true);
     }
   else yasc_message = "";
 

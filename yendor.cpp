@@ -501,6 +501,7 @@ EX namespace yendor {
     }
   
   bool levelUnlocked(int i) {
+    if(unlock_all) return true;
     yendorlevel& ylev(levels[i]);
 
     eItem t = treasureType(ylev.l);
@@ -708,7 +709,7 @@ EX namespace yendor {
     }) + addHook(hooks_removecells, 0, [] () {
     eliminate_if(yendor::yi, [] (yendorinfo& i) {
       for(int j=0; j<YDIST; j++) if(is_cell_removed(i.path[j])) {
-        DEBB(DF_MEMORY, ("removing a Yendor"));
+        DEBB(debug_memory, ("removing a Yendor"));
         if(&yi[yii] == &i) yii = NOYENDOR;
         return true;
         }
@@ -763,6 +764,7 @@ EX namespace tactic {
   
   bool tacticUnlocked(eLand l) {
     if(autocheat) return true;
+    if(unlock_all) return true;
     if(l == laWildWest || l == laDual) return true;
     return hiitemsMax(treasureType(l)) * landMultiplier(l) >= 20;
     }
@@ -848,10 +850,18 @@ EX namespace tactic {
     }
     
     int nl = isize(landlist);
-
     int nlm = nl;
-    int ofs = dialog::infix != "" ? 0 : dialog::handlePage(nl, nlm, (nl+1)/2);
-            
+
+    int ofs = 0;
+    int numpages = 1;
+
+    if(dialog::infix == "") {
+      numpages = (nl-1) / lands_per_page + 1;
+
+      if(numpages > 1)
+         ofs += dialog::handlePage(nl, nlm, lands_per_page, numpages);
+      }
+
     int vf = nlm ? min((vid.yres-4*vid.fsize) / (nlm+1), vid.xres/40) : vid.xres/40;
     
     int xr = vid.xres / 64;
@@ -907,7 +917,7 @@ EX namespace tactic {
         }
       }
     
-    dialog::displayPageButtons(3, dialog::infix == "");
+    dialog::displayPageButtons(3, numpages);
 
     uploadScore();
     if(on) unrecord(specialland);
@@ -924,7 +934,7 @@ EX namespace tactic {
       displayScore(scorehere, xr * 50);
       }
      
-    keyhandler = [land_for] (int sym, int uni) {
+    keyhandler = [land_for, numpages] (int sym, int uni) {
       if(land_for.count(uni)) {
         eLand ll = landlist[land_for.at(uni)];
         dialog::do_if_confirmed([ll] {
@@ -965,8 +975,8 @@ EX namespace tactic {
         
         "Good luck, and have fun!"
         );
-      else if(dialog::infix == "" && dialog::handlePageButtons(uni)) ;
-      else if(dialog::editInfix(uni)) dialog::list_skip = 0;
+      else if(dialog::infix == "" && dialog::handlePageButtons(sym, uni, true, numpages)) ;
+      else if(dialog::editInfix(sym, uni)) dialog::list_skip = 0;
       else if(doexiton(sym, uni)) popScreen();
       };
     }
@@ -1392,7 +1402,7 @@ EX namespace peace {
 
     if(true) {
       dialog::addBreak(100);
-      dialog::addBoolItem(XLAT("puzzles"), otherpuzzles, '1');
+      dialog::addBoolItem(XLAT("puzzles"), otherpuzzles && !explore_other, '1');
       dialog::add_action([] { otherpuzzles = true; explore_other = false; });
       dialog::addBoolItem(XLAT("exploration"), explore_other, '2');
       dialog::add_action([] { otherpuzzles = true; explore_other = true; });
@@ -1465,8 +1475,11 @@ EX namespace peace {
       });
     dialog::addItem(XLAT("Return to the normal game"), '0');
     dialog::add_action([] {
-      stop_game();
-      if(peace::on) stop_game_and_switch_mode(rg::peace);
+      if(peace::on) {
+        stop_game();
+        if(peace::on) stop_game_and_switch_mode(rg::peace);
+        start_game();
+        }
       });
 
     dialog::addBack();    
@@ -1500,7 +1513,7 @@ void mode_screen_for_current() {
     else gotoHelp(yendor::chelp);
     });
 
-  dialog::addSelItem(XLAT("Pure Tactics Mode"), its(tactic::compute_tscore(mc)), 't');
+  dialog::addSelItem(XLAT("pure tactics mode"), its(tactic::compute_tscore(mc)), 't');
   dialog::add_action(tactic::start);
 
   dialog::addBreak(100);

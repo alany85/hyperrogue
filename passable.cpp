@@ -143,6 +143,8 @@ EX bool anti_alchemy(cell *w, cell *from) {
 EX bool passable(cell *w, cell *from, flagtype flags) {
   bool vrevdir = bool(flags&P_VOID);
 
+  if(w->land == laDual && pseudohept(w) && !F(P_BULLET)) return false;
+
   if(from && from != w && nonAdjacent(from, w) && !F(P_IGNORE37 | P_BULLET)) return false;
   
   if((isWateryOrBoat(w) || w->wall == waShallow) && F(P_WATERCURSE))
@@ -169,7 +171,6 @@ EX bool passable(cell *w, cell *from, flagtype flags) {
     if(airdist(w) < 3) return false;
     if(againstWind(w,from)) return false;
     if(isGravityLand(w)) return false;
-    if(w->wall == waChasm && w->land == laDual) return false;
     }
 
   if(from && strictlyAgainstGravity(w, from, vrevdir, flags)
@@ -417,7 +418,8 @@ EX bool canPushStatueOn(cell *c, flagtype flags) {
   return passable(c, NULL, P_MONSTER | flags) && !snakelevel(c) &&
     !isWorm(c->monst) && !isReptile(c->wall) && !peace::on && 
     !cellHalfvine(c) && !isDie(c->wall) &&
-    !among(c->wall, waBoat, waFireTrap, waArrowTrap);
+    !among(c->wall, waBoat, waFireTrap, waArrowTrap) &&
+    !do_not_touch_this_wall(c);
   }
 
 EX void moveBoat(const movei& mi) {
@@ -475,7 +477,7 @@ EX bool isNeighbor1(cell *f, cell *w) {
   }
 
 EX bool passable_for(eMonster m, cell *w, cell *from, flagtype extra) {
-  cell *dummy;
+  jumpdata jdummy;
   if(w->monst && !(extra & P_MONSTER) && !isPlayerOn(w)) 
     return false;
   if(m == moWolf) {
@@ -573,12 +575,12 @@ EX bool passable_for(eMonster m, cell *w, cell *from, flagtype extra) {
     }
   #endif
   if(m == moFrog) {
-    return isNeighbor1(from, w) ? passable(w, from, extra) : check_jump(from, w, extra, dummy) == 3;
+    return isNeighbor1(from, w) ? passable(w, from, extra) : check_jump(from, w, extra, jdummy) == 3;
     }
   if(m == moPhaser)
-    return isNeighbor1(from, w) ? passable(w, from, extra) : check_phase(from, w, extra, dummy) == 3;
+    return isNeighbor1(from, w) ? passable(w, from, extra) : check_phase(from, w, extra, jdummy) == 3;
   if(m == moVaulter)
-    return isNeighbor1(from, w) ? passable(w, from, extra) : check_vault(from, w, extra, dummy) == 6;
+    return isNeighbor1(from, w) ? passable(w, from, extra) : check_vault(from, w, extra, jdummy) == 6;
   if(m == moAltDemon) {
     if(extra & P_ONPLAYER) {
       if(isPlayerOn(w)) return true;

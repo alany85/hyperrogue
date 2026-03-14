@@ -558,7 +558,7 @@ EX void shortcut_found(tcell *c, tcell *alt, vector<twalker> &walkers, vector<tw
     return;
     }
 
-  if(debugflags & DF_GEOM)
+  if(debug_geometry)
     println(hlog, "new shortcut found, pre =  ", pre, " post = ", post, " pre reaches ", walkers[wpos], " post reaches ", walkers2.back(), " of type ", walkers[wpos].at->id, " sample = ", c);
 
   if(isize(pre) > max_shortcut_length) {
@@ -575,7 +575,7 @@ EX void shortcut_found(tcell *c, tcell *alt, vector<twalker> &walkers, vector<tw
   sh->last_dir = c->any_nearer;
   auto& sh1 = *sh;
 
-  if(debugflags & DF_GEOM) println(hlog, "exhaustive search:");
+  if(debug_geometry) println(hlog, "exhaustive search:");
   indenter ind(2);
   tcell* c1 = first_tcell;
   while(c1) {
@@ -595,11 +595,11 @@ EX void find_new_shortcuts(tcell *c, int d, tcell *alt, int newdir, int delta) {
   if(flags & w_known_distances) return;
 
   ufindc(c);
-  if(debugflags & DF_GEOM)
+  if(debug_geometry)
     println(hlog, "solid ", c, " changes ", c->dist, " to ", d, " alt=", alt);
 
   if(newdir == c->any_nearer) {
-    if(debugflags & DF_GEOM)
+    if(debug_geometry)
       println(hlog, "same direction");
     return;
     }
@@ -785,7 +785,7 @@ EX void be_solid(tcell *c) {
   look_for_shortcuts(c);
   ufindc(c);
   if(c->dist == MYSTERY) {
-    if(debugflags & DF_GEOM)
+    if(debug_geometry)
       println(hlog, "set solid but no dist ", c);
     debuglist = { c };
     throw rulegen_failure("set solid but no dist");
@@ -832,7 +832,7 @@ EX void look_for_shortcuts(tcell *c, shortcut& sh) {
 
     process_fix_queue();
     if(tw.at->dist < c->dist) {
-      if(debugflags & DF_GEOM)
+      if(debug_geometry)
         println(hlog, "smart shortcut updated ", c->dist, " to ", tw.at->dist);
       }
     push_unify(tw, tw0);
@@ -1236,7 +1236,7 @@ int get_side(twalker what) {
       cw = get_parent_dir(cw);
       if(cw.peek()->dist >= cw.at->dist) {
         handle_distance_errors();
-        if(debugflags & DF_GEOM)
+        if(debug_geometry)
           println(hlog, "get_parent_dir error at ", cw, " and ", cw.at->move(cw.spin), ": ", cw.at->dist, "::", cw.at->move(cw.spin)->dist);
         throw rulegen_failure("get_parent_dir error");
         }
@@ -1513,7 +1513,7 @@ EX void rules_iteration_for(twalker& cw) {
   else if(ts.rules != cids) {
     handle_distance_errors();
     auto& r = ts.rules;
-    if(debugflags & DF_GEOM) {
+    if(debug_geometry) {
       println(hlog, "merging ", ts.rules, " vs ", cids);
       }
     int mismatches = 0;
@@ -1555,7 +1555,7 @@ EX void rules_iteration_for(twalker& cw) {
 
 void minimize_rules() {
   states_premini = isize(treestates);
-  if(debugflags & DF_GEOM)
+  if(debug_geometry)
     println(hlog, "minimizing rules...");
   int next_id = isize(treestates);
 
@@ -1599,7 +1599,7 @@ void minimize_rules() {
       }
     }
 
-  if(debugflags & DF_GEOM)
+  if(debug_geometry)
     println(hlog, "final new_ids = ", new_ids, " / ", next_id);
 
   if(1) {
@@ -1613,6 +1613,21 @@ void minimize_rules() {
       for(auto& r: ts.rules)
         if(r >= 0) r = new_id[r];
       }
+    }
+  }
+
+void find_live_states() {
+  for(auto& ts: treestates) ts.is_live = true;
+  while(true) {
+    int changes = 0;
+    for(auto& ts: treestates) if(ts.is_live) {
+      bool ok = false;
+      for(int r: ts.rules) {
+        if(r >= 0 && treestates[r].is_live) ok = true;
+        }
+      if(!ok) changes++, ts.is_live = false;
+      }
+    if(!changes) break;
     }
   }
 
@@ -1640,12 +1655,38 @@ void find_possible_parents() {
         ts.is_possible_parent = false;
         changes++;
         }
+
+    if(!changes) for(auto& ts: treestates)
+      if(ts.is_possible_parent) {
+        set<int> visited;
+        vector<int> vis;
+        auto visit = [&] (int v) { if(visited.count(v)) return; visited.insert(v); vis.push_back(v); };
+        bool left_found = false, right_found = false;
+        visit(ts.id);
+        for(int i=0; i<isize(vis); i++) {
+          auto at = vis[i];
+          for(auto p: treestates[at].possible_parents) {
+            int at1 = p.first, ppar = p.second;
+            visit(at1);
+            auto& r = treestates[at1].rules;
+            for(int j=1; j<isize(r); j++) if(r[j] >= 0 && treestates[r[j]].is_live) {
+              if(j < ppar) left_found = true;
+              if(j > ppar) right_found = true;
+              }
+            }
+          if(left_found && right_found) break;
+          }
+        if(!left_found || !right_found) {
+          ts.is_possible_parent = false;
+          changes++;
+          }
+        }
     if(!changes) break;
     }
   
   int pp = 0;
   for(auto& ts: treestates) if(ts.is_possible_parent) pp++;
-  if(debugflags & DF_GEOM)
+  if(debug_geometry)
     println(hlog, pp, " of ", isize(treestates), " states are possible_parents");
   }
 
@@ -1715,10 +1756,10 @@ void verified_treewalk(twalker& tw, int id, int dir) {
       if((flags & w_examine_all) || !branch_conflicts_seen.count(conflict_id)) {
         branch_conflicts_seen.insert(conflict_id);
         important.push_back(tw.at);
-        if(debugflags & DF_GEOM)
+        if(debug_geometry)
           println(hlog, "branch conflict ", conflict_id, " found");
         }
-      else if(debugflags & DF_GEOM)
+      else if(debug_geometry)
         println(hlog, "branch conflict ", conflict_id, " found again");
       debuglist = {tw, tw+wstep};
       throw verify_advance_failed();
@@ -1731,7 +1772,7 @@ bool examine_branch(int id, int left, int right) {
   if(WDIM == 3) return true;
   auto rg = treestates[id].giver;
 
-  if(debugflags & DF_GEOM)
+  if(debug_geometry)
     println(hlog, "need to examine branches ", tie(left, right), " of ", id, " starting from ", rg, " step = ", rg+left+wstep, " vs ", rg+right+wstep);
 
   indenter ind(2);
@@ -1931,10 +1972,10 @@ EX void rules_iteration() {
     }
   
   handle_distance_errors();
-  if(debugflags & DF_GEOM)
+  if(debug_geometry)
     println(hlog, "number of treestates = ", isize(treestates));
   rule_root = get_treestate_id(t_origin[0]).second;
-  if(debugflags & DF_GEOM)
+  if(debug_geometry)
     println(hlog, "rule_root = ", rule_root);
 
   for(int id=0; id<isize(treestates); id++) {
@@ -2023,7 +2064,7 @@ EX void rules_iteration() {
         }
     if(qbranches == 2) double_live_branches++;
     if((flags & w_slow_side) && first_live_branch == last_live_branch && treestates[id].is_root) {
-      if(debugflags & DF_GEOM)
+      if(debug_geometry)
         println(hlog, "for id ", id, " we have a single live branch");
       single_live_branches++;
       indenter ind(2);
@@ -2033,7 +2074,7 @@ EX void rules_iteration() {
     if(isize(single_live_branch_close_to_root) != q) {
       vector<tcell*> v;
       for(auto c: single_live_branch_close_to_root) v.push_back(c);
-      if(debugflags & DF_GEOM) 
+      if(debug_geometry)
         println(hlog, "changed single_live_branch_close_to_root from ", q, " to ", v);
       debuglist = { treestates[id].giver };
       clear_sidecache_and_codes();
@@ -2408,6 +2449,16 @@ struct hrmap_rulegen : hrmap {
     }
   };
 
+EX vector<int> canonical_path_to(heptagon *h) {
+  vector<int> res;
+  while(h != currentmap->getOrigin()) {
+    res.push_back(h->c.spin(0));
+    h = h->cmove(0);
+    }
+  reverse(res.begin(), res.end());
+  return res;
+  }
+
 EX vector<treestate> alt_treestates;
 
 EX void swap_treestates() {
@@ -2455,7 +2506,7 @@ EX bool prepare_rules() {
     rules_known_for = arb::current.name;
     rule_status = XLAT("rules generated successfully: %1 states using %2-%3 cells", 
       its(isize(treestates)), its(tcellcount), its(tunified));
-    if(debugflags & DF_GEOM) println(hlog, rule_status);
+    if(debug_geometry) println(hlog, rule_status);
     return true;
     }
   catch(rulegen_retry& e) {
@@ -2467,7 +2518,7 @@ EX bool prepare_rules() {
   catch(rulegen_failure& e) {
     rule_status = XLAT("bug: %1", e.what());
     }
-  if(debugflags & DF_GEOM) println(hlog, rule_status);
+  if(debug_geometry) println(hlog, rule_status);
   return false;
   }
 
@@ -2503,16 +2554,25 @@ auto hooks_arg =
 #endif
 
 auto hooks = addHook(hooks_configfile, 100, [] {
-      param_i(max_retries, "max_retries");
+      param_i(max_retries, "max_retries")
+      ->set_reaction(change_rulegen_params);
       param_i(max_tcellcount, "max_tcellcount")
-      ->editable(0, 16000000, 100000, "maximum cellcount", "controls the max memory usage of conversion algorithm -- the algorithm fails if exceeded", 'c');
-      param_i(max_adv_steps, "max_adv_steps");
-      param_i(max_examine_branch, "max_examine_branch");
-      param_i(max_getside, "max_getside");
-      param_i(max_bdata, "max_bdata");
-      param_i(max_shortcut_length, "max_shortcut_length");
-      param_i(rulegen_timeout, "rulegen_timeout");
-      param_i(first_restart_on, "first_restart_on");
+      ->editable(0, 16000000, 100000, "maximum cellcount", "controls the max memory usage of conversion algorithm -- the algorithm fails if exceeded", 'c')
+      ->set_reaction(change_rulegen_params);
+      param_i(max_adv_steps, "max_adv_steps")
+      ->set_reaction(change_rulegen_params);
+      param_i(max_examine_branch, "max_examine_branch")
+      ->set_reaction(change_rulegen_params);
+      param_i(max_getside, "max_getside")
+      ->set_reaction(change_rulegen_params);
+      param_i(max_bdata, "max_bdata")
+      ->set_reaction(change_rulegen_params);
+      param_i(max_shortcut_length, "max_shortcut_length")
+      ->set_reaction(change_rulegen_params);
+      param_i(rulegen_timeout, "rulegen_timeout")
+      ->set_reaction(change_rulegen_params);
+      param_i(first_restart_on, "first_restart_on")
+      ->set_reaction(change_rulegen_params);
       #if MAXMDIM >= 4
       param_i(max_ignore_level_pre, "max_ignore_level_pre");
       param_i(max_ignore_level_post, "max_ignore_level_post");
@@ -2552,9 +2612,9 @@ EX void parse_treestate(arb::arbi_tiling& c, exp_parser& ep) {
   if(qparent > 1) throw hr_parse_exception("multiple parent at " + ep.where());
   if(qparent == 1) {
     ts.parent_dir = sumparent;
-    if(debugflags & DF_GEOM) println(hlog, "before: ", ts.rules);
+    if(debug_geometry) println(hlog, "before: ", ts.rules);
     std::rotate(ts.rules.begin(), ts.rules.begin() + sumparent, ts.rules.end());
-    if(debugflags & DF_GEOM) println(hlog, "after : ", ts.rules);
+    if(debug_geometry) println(hlog, "after : ", ts.rules);
     }
   ep.force_eat(")");
   }
@@ -2569,7 +2629,43 @@ EX void verify_parsed_treestates(arb::arbi_tiling& c) {
       throw hr_parse_exception("undefined treestate");
     }
   for(auto& sh: c.shapes) sh.cycle_length = sh.size();
+  find_live_states();
   find_possible_parents();
+  }
+
+EX void prepare_rules_and_restart() {
+  if(!prepare_rules()) return;
+  println(hlog, "prepare_rules returned true");
+  stop_game();
+  arb::convert::activate();
+  start_game();
+  delete_tmap();
+  }
+
+EX void switch_tes_internal_format() {
+  if(!arb::in()) {
+    try {
+      arb::convert::convert();
+      arb::convert::activate();
+      start_game();
+      rule_status = XLAT("converted successfully -- %1 cell types", its(isize(arb::current.shapes)));
+      rules_known_for = "unknown";
+      }
+    catch(hr_parse_exception& ex) {
+      println(hlog, "failed: ", ex.s);
+      rule_status = XLAT("failed to convert: ") + ex.s;
+      rules_known_for = "unknown";
+      }
+    }
+  else if(arb::convert::in()) {
+    stop_game();
+    geometry = arb::convert::base_geometry;
+    variation = arb::convert::base_variation;
+    start_game();
+    }
+  else {
+    addMessage(XLAT("cannot be disabled for this tiling"));
+    }
   }
 
 EX void show() {
@@ -2582,43 +2678,44 @@ EX void show() {
     "tessellations (contrary to the basic implementation of Archimedean, tes, and unrectified/warped/untruncated tessellations).\n\nYou can convert mostly any "
     "non-spherical periodic 2D tessellation to strict tree based.\n\nSwitching the map format erases your map."));
 
-  if(aperiodic) {
+  if(closed_manifold) {
+    dialog::addInfo("not available (and not necessary) in closed manifolds");
+    dialog::addBack();
+    dialog::display();
+    return;
+    }
+  else if(aperiodic) {
     dialog::addInfo("not available in aperiodic tessellations");
     dialog::addBack();
     dialog::display();
+    return;
     }
-  else if(WDIM == 3) {
-    dialog::addInfo("not available in 3D tessellations");
+  else if(bt::in()) {
+    dialog::addInfo("not available in binary-like tilings");
     dialog::addBack();
     dialog::display();
+    return;
+    }
+  else if(WDIM == 3) {
+    if(reg3::in() && reg3::variation_rule_available())
+      dialog::addInfo("precomputed rule used (for specific variation)");
+    else if(reg3::in() && reg3::pure_rule_available())
+      dialog::addInfo("precomputed rule used (for regular honeycomb)");
+    else if(euc::in())
+      dialog::addInfo("no rule needed for Euclidean");
+    else if(reg3::in()) {
+      dialog::addInfo("not available in this regular honeycomb");
+      dialog::addInfo("fallback implementation used");
+      }
+    else
+      dialog::addInfo("not available in this 3D tessellation");
+    dialog::addBack();
+    dialog::display();
+    return;
     }
 
   dialog::addBoolItem(XLAT("in tes internal format"), arb::in(), 't');
-  dialog::add_action([] {
-    if(!arb::in()) {
-      try {
-        arb::convert::convert();
-        arb::convert::activate();
-        start_game();
-        rule_status = XLAT("converted successfully -- %1 cell types", its(isize(arb::current.shapes)));
-        rules_known_for = "unknown";
-        }
-      catch(hr_parse_exception& ex) {
-        println(hlog, "failed: ", ex.s);
-        rule_status = XLAT("failed to convert: ") + ex.s;
-        rules_known_for = "unknown";
-        }
-      }
-    else if(arb::convert::in()) {
-      stop_game();
-      geometry = arb::convert::base_geometry;
-      variation = arb::convert::base_variation;
-      start_game();
-      }
-    else {
-      addMessage(XLAT("cannot be disabled for this tiling"));
-      }
-    });
+  dialog::add_action(switch_tes_internal_format);
 
   dialog::addBoolItem(XLAT("extended football colorability"), arb::extended_football, 'f');
   dialog::add_action([] {
@@ -2627,6 +2724,8 @@ EX void show() {
     rule_status = "manually disabled";
     if(arb::convert::in()) {
       stop_game();
+      geometry = arb::convert::base_geometry;
+      variation = arb::convert::base_variation;
       arb::convert::convert();
       arb::convert::activate();
       start_game();
@@ -2645,15 +2744,7 @@ EX void show() {
   add_edit(arb::convert::minimize_on_convert);
   dialog::addBoolItem(XLAT("strict tree maps"), currentmap->strict_tree_rules(), 's');
   dialog::add_action([] {
-    if(!currentmap->strict_tree_rules()) {
-      if(prepare_rules()) {
-        println(hlog, "prepare_rules returned true");
-        stop_game();
-        arb::convert::activate();
-        start_game();
-        delete_tmap();
-        }
-      }
+    if(!currentmap->strict_tree_rules()) prepare_rules_and_restart();
     else if(arb::current.have_tree) {
       addMessage(XLAT("cannot be disabled for this tiling"));
       }
@@ -2675,6 +2766,25 @@ EX void show() {
   dialog::addBreak(100);
   dialog::addBack();
   dialog::display();
+  }
+
+EX void change_rulegen_params() {
+  bool b = currentmap->strict_tree_rules();
+  if(b) {
+    rulegen::rules_known_for = "unknown";
+    prepare_rules_and_restart();
+    }
+  else rulegen::rules_known_for = "unknown";
+  }
+
+EX void change_minimize_on_convert() {
+  bool s = currentmap->strict_tree_rules();
+  if(arb::convert::in()) {
+    rules_known_for = "unknown";
+    switch_tes_internal_format();
+    switch_tes_internal_format();
+    if(s) prepare_rules_and_restart();
+    }
   }
 
 #if CAP_COMMANDLINE

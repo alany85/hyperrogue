@@ -17,6 +17,8 @@ extern hrmap *currentmap;
 
 EX namespace gp {
 
+  EX debugflag debug_gp = {"graph_gp"};
+
   #if HDR
   struct loc : pair<int, int> {
     loc() {}
@@ -214,7 +216,7 @@ EX namespace gp {
       if(peek(wcw)) {
         auto wcw1 = get_localwalk(wc1, dir1);
         if(wcw + wstep != wcw1) {
-          DEBB(DF_GP, (at1, " : ", (wcw+wstep), " / ", wcw1, " (pull error from ", at, " :: ", wcw, ")") );
+          DEBB(debug_gp, (at1, " : ", (wcw+wstep), " / ", wcw1, " (pull error from ", at, " :: ", wcw, ")") );
           exit(1);
           }
         if(do_adjm) wc1.adjm = wc.adjm * get_adj(wcw.at, wcw.spin);
@@ -223,7 +225,7 @@ EX namespace gp {
       }
     if(peek(wcw)) {
       set_localwalk(wc1, dir1, wcw + wstep);
-      DEBB(DF_GP, (at1, " :", wcw+wstep, " (pulled from ", at, " :: ", wcw, ")"));
+      DEBB(debug_gp, (at1, " :", wcw+wstep, " (pulled from ", at, " :: ", wcw, ")"));
       if(do_adjm) wc1.adjm = wc.adjm * get_adj(wcw.at, wcw.spin);
       return true;
       }
@@ -236,12 +238,12 @@ EX namespace gp {
     auto& wc = get_mapping(at);
     auto wcw = get_localwalk(wc, dir);
     auto& wc1 = get_mapping(at + eudir(dir));
-    DEBB0(DF_GP, (hr::format("  md:%02d s:%d", wc.mindir, wc.cw.spin)); )
-    DEBB0(DF_GP, ("  connection ", at, "/", dir, " ", wc.cw+dir, "=", wcw, " ~ ", at+eudir(dir), "/", dir1, " "); )
+    DEBB0(debug_gp, (hr::format("  md:%02d s:%d", wc.mindir, wc.cw.spin)); )
+    DEBB0(debug_gp, ("  connection ", at, "/", dir, " ", wc.cw+dir, "=", wcw, " ~ ", at+eudir(dir), "/", dir1, " "); )
     if(!wc1.cw.at) {
       wc1.start = wc.start;
       if(peek(wcw)) {
-        DEBB0(DF_GP, (" (pulled) "); )
+        DEBB0(debug_gp, (" (pulled) "); )
         set_localwalk(wc1, dir1, wcw + wstep);
         if(do_adjm) wc1.adjm = wc.adjm * get_adj(wcw.at, wcw.spin);
         }
@@ -251,27 +253,25 @@ EX namespace gp {
         set_localwalk(wc1, dir1, wcw + wstep);
         if(do_adjm) wc1.adjm = wc.adjm;
         spawn++;
-        DEBB0(DF_GP, (" (created) "); )
+        DEBB0(debug_gp, (" (created) "); )
         }
       }
-    DEBB0(DF_GP, (wc1.cw+dir1, " "));
+    DEBB0(debug_gp, (wc1.cw+dir1, " "));
     auto wcw1 = get_localwalk(wc1, dir1);
     if(peek(wcw)) {
       if(wcw+wstep != wcw1) {
-        DEBB(DF_GP, ("FAIL: ", wcw, " connected to ", wcw+wstep, " not to ", wcw1); exit(1); )
+        DEBB(debug_gp, ("FAIL: ", wcw, " connected to ", wcw+wstep, " not to ", wcw1); exit(1); )
         }
       else {
-        DEBB(DF_GP, ("(was there)"));
+        DEBB(debug_gp, ("(was there)"));
         }
       }
     else {
-      DEBB(DF_GP, ("ok"));
+      DEBB(debug_gp, ("ok"));
       peek(wcw) = wcw1.at;
       wcw.at->c.setspin(wcw.spin, wcw1.spin, wcw.mirrored != wcw1.mirrored);
-      if(wcw+wstep != wcw1) {
-        DEBB(DF_GP | DF_ERROR, ("assertion failed"));
-        exit(1);
-        }
+      if(wcw+wstep != wcw1)
+        throw hr_exception("assertion failed in gp::conn1");
       }
     if(do_adjm) {
       get_adj(wcw.at, wcw.spin) = inverse(wc.adjm) * wc1.adjm;
@@ -295,18 +295,18 @@ EX namespace gp {
     auto& ac0 = get_mapping(at);
     ac0.cw = cellwalker(hs.at->c7, hs.spin, hs.mirrored);
     ac0.start = at;
-    DEBB(DF_GP, (at, " : ", ac0.cw));
+    DEBB(debug_gp, (at, " : ", ac0.cw));
     return ac0;
     }
 
   EX void extend_map(cell *c, int d) {
-    DEBB(DF_GP, ("EXTEND ",c, " ", d));
+    DEBB(debug_gp, ("EXTEND ",c, " ", d));
     indenter ind(2);
     if(c->master->c7 != c) {
       auto c1 = c;
       auto d1 = d;
       while(c->master->c7 != c) {
-        DEBB(DF_GP, (c, " direction 0 corresponds to ", c->move(0), " direction ", c->c.spin(0)); )
+        DEBB(debug_gp, (c, " direction 0 corresponds to ", c->move(0), " direction ", c->c.spin(0)); )
         d = c->c.spin(0);
         c = c->move(0);
         }
@@ -465,13 +465,13 @@ EX namespace gp {
     for(int i=0; i<S3; i++) {
       loc start = vc[i];
       loc end = vc[(i+1)%S3];
-      DEBB(DF_GP, ("from ", start, " to ", end); )
+      DEBB(debug_gp, ("from ", start, " to ", end); )
       loc rel = param;
       auto build = [&] (loc& at, int dx, bool forward) {
         int dx0 = fixg6(dx + SG2*i);
         auto at1 = at + eudir(dx0);
         auto dx1 = fixg6(dx0 + SG3);
-        DEBB(DF_GP, (at, " .. ", make_pair(at1, dx1)));
+        DEBB(debug_gp, (at, " .. ", make_pair(at1, dx1)));
         conn(at, dx0);
         if(forward) { get_mapping(at).rdir = dx0; get_mapping(at1).rdir1 = dx1; }
         else { get_mapping(at).rdir1 = dx0; get_mapping(at1).rdir = dx1; }
@@ -506,8 +506,11 @@ EX namespace gp {
         }
       for(int k=0; k<SG6; k++)
         if(start + eudir(k+SG2*i) == end)
-          build(start, k, true);                         
-      if(start != end) { DEBB(DF_GP | DF_ERROR, ("assertion failed: start ", start, " == end ", end)); exit(1); }
+          build(start, k, true);
+      if(start != end) {
+        DEBB(debug_gp || debug_errors, ("assertion failed: start ", start, " == end ", end));
+        throw hr_exception("assertion failed in extend_map");
+        }
       }
 
     // now we can fill the interior of our big equilateral triangle
@@ -533,7 +536,7 @@ EX namespace gp {
         visit(at1);
         }
       }
-    DEBB(DF_GP, ("DONE"))
+    DEBB(debug_gp, ("DONE"))
     }
   
   EX hyperpoint loctoh_ort(loc at) {
@@ -565,8 +568,15 @@ EX namespace gp {
     };
 
   #define corner_coords (S3==3 ? corner_coords6 : corner_coords4)
+
+  EX hookset<bool(const transmatrix& corners, const hyperpoint& c, hyperpoint& h)> hooks_cornmul;
+  EX hookset<void(const transmatrix& corners)> hooks_init_cornmul;
   
-  hyperpoint cornmul(const transmatrix& corners, const hyperpoint& c) {
+  EX hyperpoint cornmul(const transmatrix& corners, const hyperpoint& c) {
+
+    hyperpoint h;
+    if(callhandlers(false, hooks_cornmul, corners, c, h)) return h;
+
     if(sphere && S3 == 3) {
       ld cmin = c[0] * c[1] * c[2] * (6 - S7);
       return corners * point3(c[0] + cmin, c[1] + cmin, c[2] + cmin);
@@ -641,6 +651,7 @@ EX namespace gp {
       set_column(cgi.gpdata->rotator, i, ac);
       }
 
+    callhooks(hooks_init_cornmul, dir_matrix(0));
 
     cgi.gpdata->Tf.resize(S7);
 
@@ -700,7 +711,8 @@ EX namespace gp {
       else
         cgi.gpdata->area = x * x + y * y;
       next = point3(x+y/2., -y * sqrt(3) / 2, 0);
-      ld scale = 1 / hypot_d(2, next);
+      auto& scale = cgi.gpdata->scale;
+      scale = 1 / hypot_d(2, next);
       if(!GOLDBERG) scale = 1;
       if(special_fake()) scale = 1;
       cgi.crossf *= scale;
@@ -710,15 +722,7 @@ EX namespace gp {
 //    spin = spintox(next);
 //    ispin = rspintox(next);
       cgi.gpdata->alpha = -atan2(next[1], next[0]) * 6 / S7;
-      if(S3 == 3)
-        cgi.base_distlimit = (cgi.base_distlimit + log(scale) / log(2.618)) / scale;
-      else
-        cgi.base_distlimit = 3 * max(param.first, param.second) + 2 * min(param.first, param.second);
-      if(S7 == 12)
-        cgi.base_distlimit = 2 * param.first + 2 * param.second + 1;
-      if(cgi.base_distlimit > SEE_ALL)
-        cgi.base_distlimit = SEE_ALL;
-      DEBB(DF_GEOM | DF_POLY, ("scale = ", scale));
+      DEBB(debug_geometry, ("scale = ", scale));
       }
     }
 
@@ -800,6 +804,32 @@ EX namespace gp {
       "By default HyperRogue uses bitruncation, which corresponds to GP(1,1)."
       );
     }  
+
+  EX void dual_of_current() {
+    auto p = univ_param();
+    if(S3 == 3 && !UNTRUNCATED) {
+      println(hlog, "set param to ", p * loc(1,1));
+      if(!check_whirl_set(p * loc(1, 1))) return;
+      set_variation(eVariation::untruncated);
+      start_game();
+      config = human_representation(univ_param());
+      }
+    else if(S3 == 4 && !UNRECTIFIED) {
+      if(!check_whirl_set(p * loc(1, 1))) return;
+      set_variation(eVariation::unrectified);
+      start_game();
+      config = human_representation(univ_param());
+      }
+    else if(S3 == 3 && UNTRUNCATED) {
+      println(hlog, "whirl_set to ", (p * loc(1,1)) / 3);
+      if(!check_whirl_set((p * loc(1,1)) / 3)) return;
+      config = human_representation(univ_param());
+      }
+    else if(S3 == 4 && UNRECTIFIED) {
+      if(!check_whirl_set((p * loc(1,1)) / 2)) return;
+      config = human_representation(univ_param());
+      }
+    }
 
   void show() {
     cmode = sm::SIDE | sm::MAYDARK;
@@ -948,32 +978,11 @@ EX namespace gp {
     
     if(have_dual) {
       dialog::addItem(XLAT("dual of current"), 'D');
-      dialog::add_action([] { 
-        auto p = univ_param();
-        if(S3 == 3 && !UNTRUNCATED) {
-          println(hlog, "set param to ", p * loc(1,1));
-          if(!check_whirl_set(p * loc(1, 1))) return;
-          set_variation(eVariation::untruncated);
-          start_game();
-          config = human_representation(univ_param());
-          }
-        else if(S3 == 4 && !UNRECTIFIED) {
-          if(!check_whirl_set(p * loc(1, 1))) return;
-          set_variation(eVariation::unrectified);
-          start_game();
-          config = human_representation(univ_param());
-          }
-        else if(S3 == 3 && UNTRUNCATED) {
-          println(hlog, "whirl_set to ", (p * loc(1,1)) / 3);
-          if(!check_whirl_set((p * loc(1,1)) / 3)) return;
-          config = human_representation(univ_param());
-          }
-        else if(S3 == 4 && UNRECTIFIED) {
-          if(!check_whirl_set((p * loc(1,1)) / 2)) return;
-          config = human_representation(univ_param());
-          }
-        });
+      dialog::add_action(dual_of_current);
       }
+
+    if(GOLDBERG_INV) add_edit(gp::su);
+    else dialog::addBreak(100);
     
     dialog::addBreak(100);
     dialog::addHelp();
@@ -1220,8 +1229,10 @@ EX namespace gp {
       }
 
     transmatrix relative_matrixc(cell *c2, cell *c1, const hyperpoint& hint) override {
-      c1 = mapping[c1];
-      c2 = mapping[c2];
+      if(!mapping.count(c1)) { rate_limited_error("c1 is bad", lalign(0, " c1 = ", c1)); return Id; }
+      if(!mapping.count(c2)) { rate_limited_error("c2 is bad", lalign(0, " c2 = ", c2)); return Id; }
+      c1 = mapping.at(c1);
+      c2 = mapping.at(c2);
       return in_underlying([&] { return currentmap->relative_matrix(c2, c1, hint); });
       }
 
@@ -1409,6 +1420,11 @@ EX namespace gp {
           }
         }
       return C0;
+      }
+
+    int pattern_value(cell *c) override {
+      auto c1 = get_mapped(c, 0);
+      return UIU(currentmap->pattern_value(c1));
       }
     };
 
